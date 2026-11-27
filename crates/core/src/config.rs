@@ -1,4 +1,4 @@
-//! User configuration (`~/.paceline/config.json`).
+//! User configuration (`~/.limitlane/config.json`).
 
 use crate::paths::{write_atomic, Paths};
 use crate::pricing::Rate;

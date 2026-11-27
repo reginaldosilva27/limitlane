@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Limitlane",
+        "width": 384,
+        "height": 640,
+        "visible": false,
+        "decorations": false,
+        "resizable": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "transparent": true,
+        "visibleOnAllWorkspaces": true
+      }
+    ]
+  },
+  "build": {
+    "features": ["cli-exe"]
+  },
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "startMenuFolder": "Limitlane"
+      }
+    }
+  }
+}

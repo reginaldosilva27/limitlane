@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Limitlane screenshot</title>
+<!-- docs/screenshot.png: three popovers (light, dark, light) with demo data.
+     Rendered by `node record.mjs screenshot`. -->
+<style>
+  html, body { margin: 0; }
+  #shot {
+    width: 1332px; height: 730px; display: flex; gap: 36px; align-items: center; justify-content: center;
+    background: radial-gradient(900px 500px at 20% 0%, #eef1fb, transparent 70%), linear-gradient(160deg, #e9ecf4, #d9deea);
+  }
+  iframe { width: 384px; height: 640px; border: 0; background: transparent; filter: drop-shadow(0 14px 30px rgba(20, 24, 40, 0.22)); }
+</style>
+</head>
+<body>
+<div id="shot">
+  <iframe id="p0" title="Light, projects"></iframe>
+  <iframe id="p1" title="Dark, context"></iframe>
+  <iframe id="p2" title="Light, 30 days"></iframe>
+</div>
+<script src="demo-data.js"></script>
+<script src="popover-mock.js"></script>
+<script>
+  const tick = () => new Promise((r) => setTimeout(r, 60));
+  const views = [
+    { scheme: "light" },
+    { scheme: "dark", tab: "sessions" },
+    { scheme: "light", tab: "days", days: "30" },
+  ];
+  window.shotReady = Promise.all(views.map(async (v, i) => {
+    const doc = await window.LimitlaneDemo.mount(document.getElementById(`p${i}`), { scheme: v.scheme });
+    if (v.days) { doc.querySelector(`#range [data-days="${v.days}"]`).click(); await tick(); }
+    if (v.tab) { doc.querySelector(`#tabs [data-tab="${v.tab}"]`).click(); await tick(); }
+  }));
+</script>
+</body>
+</html>

@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Paceline",
+  "productName": "Limitlane",
   "version": "0.1.0",
-  "mainBinaryName": "paceline",
-  "identifier": "dev.datainaction.paceline",
+  "mainBinaryName": "limitlane",
+  "identifier": "dev.datainaction.limitlane",
   "build": {
     "frontendDist": "../ui"
   },
@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Paceline",
+        "title": "Limitlane",
         "width": 384,
         "height": 640,
         "visible": false,
@@ -45,7 +45,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "minimumSystemVersion": "11.0"
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
     }
   }
 }

@@ -1,0 +1,220 @@
+name: Release
+
+# A `v*` tag builds both installers, tests them, and publishes a GitHub release
+# that install.sh and install.ps1 download from. Pull requests that touch the
+# app or the installers run the same builds and tests without publishing.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "src-tauri/**"
+      - "crates/**"
+      - "ui/**"
+      - "install.sh"
+      - "install.ps1"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS (universal)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install tauri-cli --version "^2" --locked
+      - name: Build
+        run: |
+          cargo tauri build --target universal-apple-darwin
+          mkdir -p dist
+          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/Limitlane-macos-universal.dmg
+
+      - name: Install with install.sh and exercise the hook
+        env:
+          CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude
+          LIMITLANE_HOME: ${{ runner.temp }}/limitlane
+        run: |
+          set -euo pipefail
+          apps="$RUNNER_TEMP/Apps"
+          # Piped, the way the README runs it.
+          bash -s -- --dmg dist/Limitlane-macos-universal.dmg --dir "$apps" --no-launch < install.sh
+          app="$apps/Limitlane.app"
+          exe="$app/Contents/MacOS/limitlane"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          archs=$(lipo -archs "$exe")
+          grep -q x86_64 <<<"$archs" && grep -q arm64 <<<"$archs"
+
+          mkdir -p "$CLAUDE_CONFIG_DIR"
+          "$exe" status
+          "$exe" hook install
+          cmd=$(python3 -c 'import json,os; print(json.load(open(os.environ["CLAUDE_CONFIG_DIR"] + "/settings.json"))["statusLine"]["command"])')
+          echo "statusLine command: $cmd"
+          reset=$(( $(date +%s) + 3600 ))
+          payload="{\"model\":{\"display_name\":\"Opus\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":42,\"resets_at\":$reset},\"seven_day\":{\"used_percentage\":17,\"resets_at\":$((reset + 86400))}}}"
+          out=$(printf '%s' "$payload" | sh -c "$cmd")
+          echo "hook printed: $out"
+          grep -q "5h 42%" <<<"$out"
+          st=$("$exe" status)
+          echo "$st"
+          grep -q "42" <<<"$st"
+
+          bash -s -- --uninstall --dir "$apps" < install.sh
+          test ! -e "$app"
+
+      - name: Start the app (informational)
+        continue-on-error: true
+        run: |
+          bash -s -- --dmg dist/Limitlane-macos-universal.dmg --dir "$RUNNER_TEMP/Apps2" --no-launch < install.sh
+          "$RUNNER_TEMP/Apps2/Limitlane.app/Contents/MacOS/limitlane" > gui.log 2>&1 &
+          sleep 6
+          cat gui.log
+          kill -0 $! && echo "still running after 6 s"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: limitlane-macos
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install tauri-cli --version "^2" --locked
+      - name: Build
+        shell: pwsh
+        run: |
+          # cli-exe adds limitlane-cli.exe, the console program the hook runs.
+          cargo tauri build --bundles nsis --features cli-exe
+          if ($LASTEXITCODE -ne 0) { throw "build failed" }
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          Copy-Item $setup.FullName dist/Limitlane-windows-x64-setup.exe
+
+      # Users paste `irm ... | iex` into Windows PowerShell 5.1; test that form there.
+      - name: Install through iex in Windows PowerShell 5.1
+        shell: powershell
+        env:
+          LIMITLANE_INSTALLER: dist\Limitlane-windows-x64-setup.exe
+          LIMITLANE_NO_LAUNCH: "1"
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-Content -Raw ./install.ps1 | Invoke-Expression
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'))) { throw 'limitlane.exe was not installed' }
+
+      - name: Start the app (informational)
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $exe = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'
+          Start-Process -FilePath $exe
+          Start-Sleep -Seconds 6
+          $p = Get-Process -Name limitlane -ErrorAction SilentlyContinue
+          if (-not $p) { throw 'the app exited within 6 seconds' }
+          Write-Host "still running after 6 s (pid $($p.Id))"
+          $p | Stop-Process -Force
+
+      # Runs install.ps1 again, over the existing install, as an update would.
+      - name: Install with install.ps1 and exercise the hook
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'claude'
+          $env:LIMITLANE_HOME = Join-Path $env:RUNNER_TEMP 'limitlane'
+          New-Item -ItemType Directory -Force $env:CLAUDE_CONFIG_DIR | Out-Null
+
+          ./install.ps1 -Installer dist/Limitlane-windows-x64-setup.exe -NoLaunch
+          $exe = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'
+          $cli = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane-cli.exe'
+          if (-not (Test-Path $exe)) { throw "limitlane.exe not found at $exe" }
+          if (-not (Test-Path $cli)) { throw "limitlane-cli.exe not found at $cli" }
+
+          # Start a process the way Claude Code does: pipes for stdin and stdout.
+          function Run([string]$File, [string[]]$Argv, [string]$Stdin = '') {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $File
+            $psi.Arguments = ($Argv | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+            $psi.UseShellExecute = $false
+            $psi.RedirectStandardInput = $true
+            $psi.RedirectStandardOutput = $true
+            $psi.RedirectStandardError = $true
+            $p = [System.Diagnostics.Process]::Start($psi)
+            $p.StandardInput.Write($Stdin)
+            $p.StandardInput.Close()
+            $out = $p.StandardOutput.ReadToEnd()
+            $err = $p.StandardError.ReadToEnd()
+            $p.WaitForExit()
+            Write-Host "[$File $($psi.Arguments)] exit $($p.ExitCode)`n$out$err"
+            if ($p.ExitCode -ne 0) { throw "exit code $($p.ExitCode)" }
+            return $out
+          }
+          function StatusCommand { (Get-Content (Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json') -Raw | ConvertFrom-Json).statusLine.command }
+
+          $bash = 'C:\Program Files\Git\bin\bash.exe'
+          $reset = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 3600
+          $payload = '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":42,"resets_at":' + $reset + '},"seven_day":{"used_percentage":17,"resets_at":' + ($reset + 86400) + '}}}'
+
+          [void](Run $exe @('status'))
+          [void](Run $exe @('hook', 'install'))
+          $cmd = StatusCommand
+          Write-Host "statusLine command: $cmd"
+          # Installed from the app binary, the hook still points at the console CLI.
+          if ($cmd -ne '~/AppData/Local/Limitlane/limitlane-cli.exe statusline --limitlane-hook') { throw "unexpected command: $cmd" }
+
+          # Claude Code uses Git Bash when it is installed and PowerShell otherwise.
+          # The marker after the hook proves the shell waited for it: the app is
+          # a GUI program, and an interactive PowerShell would not wait.
+          function Assert-Waited([string]$Out, [string]$Shell) {
+            $hook = $Out.IndexOf('5h 42%'); $after = $Out.IndexOf('AFTER-HOOK')
+            if ($hook -lt 0) { throw "hook through $Shell printed the wrong line" }
+            if ($after -lt $hook) { throw "$Shell did not wait for the hook to finish" }
+          }
+          Assert-Waited (Run $bash @('-c', "$cmd; echo AFTER-HOOK") $payload) 'Git Bash'
+          Assert-Waited (Run 'powershell.exe' @('-NoProfile', '-NonInteractive', '-Command', "$cmd; 'AFTER-HOOK'") $payload) 'PowerShell'
+          if ((Run $exe @('status')) -notmatch '42') { throw 'status does not show the recorded limit' }
+
+          # An existing statusline keeps running after ours.
+          [void](Run $exe @('hook', 'uninstall'))
+          '{"statusLine":{"type":"command","command":"echo my-own-statusline"}}' | Set-Content (Join-Path $env:CLAUDE_CONFIG_DIR 'settings.json')
+          [void](Run $exe @('hook', 'install'))
+          $chained = Run $bash @('-c', (StatusCommand)) $payload
+          if ($chained -notmatch 'my-own-statusline') { throw 'the chained statusline did not run' }
+          [void](Run $exe @('hook', 'uninstall'))
+          if ((StatusCommand) -ne 'echo my-own-statusline') { throw 'uninstall did not restore the original statusline' }
+
+          ./install.ps1 -Uninstall
+          if ((Test-Path $exe) -or (Test-Path $cli)) { throw 'uninstall left files behind' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: limitlane-windows
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - run: ls -l dist
+      # Published (not a draft) so that releases/latest/download/... resolves.
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          make_latest: true

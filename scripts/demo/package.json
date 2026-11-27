@@ -1,0 +1,12 @@
+{
+  "name": "limitlane-demo",
+  "private": true,
+  "description": "Records docs/demo.gif from the real popover UI with generated demo data.",
+  "type": "module",
+  "scripts": {
+    "record": "node record.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.50.0"
+  }
+}

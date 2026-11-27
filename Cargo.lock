@@ -2200,6 +2200,45 @@ dependencies = [
 ]
 
 [[package]]
+name = "limitlane"
+version = "0.1.0"
+dependencies = [
+ "limitlane-cli",
+ "limitlane-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-notification",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "limitlane-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "limitlane-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "limitlane-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "link-section"
 version = "0.19.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2702,44 +2741,6 @@ dependencies = [
  "objc2-foundation",
  "objc2-ui-kit",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "paceline"
-version = "0.1.0"
-dependencies = [
- "paceline-cli",
- "paceline-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-notification",
-]
-
-[[package]]
-name = "paceline-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "paceline-core",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "paceline-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "serde",
- "serde_json",
- "tempfile",
 ]
 
 [[package]]
