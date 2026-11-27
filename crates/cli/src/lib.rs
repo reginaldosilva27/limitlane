@@ -1,20 +1,20 @@
-//! `ctc`: command-line companion. The menu bar app embeds this too, so the
+//! `paceline`: command-line companion. The menu bar app embeds this too, so the
 //! app binary itself can act as the statusline hook.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use ctc_core::aggregate::{Report, Totals};
-use ctc_core::alerts::fmt_duration;
-use ctc_core::forecast::{Basis, Forecast};
-use ctc_core::hook::{self, HookStatus};
-use ctc_core::limits::{self, StatuslineInput};
-use ctc_core::summary::{fmt_tokens, Engine, Summary};
-use ctc_core::Paths;
+use paceline_core::aggregate::{Report, Totals};
+use paceline_core::alerts::fmt_duration;
+use paceline_core::forecast::{Basis, Forecast};
+use paceline_core::hook::{self, HookStatus};
+use paceline_core::limits::{self, StatuslineInput};
+use paceline_core::summary::{fmt_tokens, Engine, Summary};
+use paceline_core::Paths;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 
 #[derive(Parser)]
-#[command(name = "ctc", version, about = "Claude usage in your terminal: limits, forecast, cost per project")]
+#[command(name = "paceline", version, about = "Claude usage in your terminal: limits, forecast, cost per project")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -72,8 +72,11 @@ enum Command {
     },
     /// Statusline entry point called by Claude Code (reads JSON on stdin)
     Statusline {
-        #[arg(long = "ctc-hook", hide = true)]
+        #[arg(long = "paceline-hook", hide = true)]
         marker: bool,
+        /// Marker used before the project was renamed; still accepted.
+        #[arg(long = "ctc-hook", hide = true)]
+        legacy_marker: bool,
         /// Run the statusline that was configured before the hook
         #[arg(long)]
         chain: bool,
@@ -106,7 +109,7 @@ enum GroupBy {
 
 /// Run the CLI with `args` (without the program name). Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
-    let cli = match Cli::try_parse_from(std::iter::once("ctc".to_string()).chain(args)) {
+    let cli = match Cli::try_parse_from(std::iter::once("paceline".to_string()).chain(args)) {
         Ok(c) => c,
         Err(e) => {
             let _ = e.print();
@@ -116,20 +119,20 @@ pub fn run(args: Vec<String>) -> i32 {
     let paths = Paths::from_env();
     match execute(cli.command, paths) {
         Ok(text) => {
-            // Ignore broken pipes (`ctc export | head`).
+            // Ignore broken pipes (`paceline export | head`).
             let _ = std::io::stdout().write_all(text.as_bytes());
             0
         }
         Err(e) => {
-            eprintln!("ctc: {e:#}");
+            eprintln!("paceline: {e:#}");
             1
         }
     }
 }
 
 fn execute(command: Command, paths: Paths) -> Result<String> {
-    let now = ctc_core::now();
-    let offset = ctc_core::local_offset();
+    let now = paceline_core::now();
+    let offset = paceline_core::local_offset();
     let mut engine = Engine::new(paths.clone());
     Ok(match command {
         Command::Status { json } => {
@@ -181,7 +184,7 @@ fn execute(command: Command, paths: Paths) -> Result<String> {
                     }
                     t
                 }
-                HookStatus::Other { command } => format!("not installed (another statusline is configured: {command})\nRun `ctc hook install` to wrap it; it will keep rendering.\n"),
+                HookStatus::Other { command } => format!("not installed (another statusline is configured: {command})\nRun `paceline hook install` to wrap it; it will keep rendering.\n"),
                 HookStatus::NotInstalled => "not installed\n".into(),
             },
         },
@@ -278,7 +281,7 @@ pub fn render_status(s: &Summary, offset: chrono::FixedOffset) -> String {
         t.push_str("Limits: no data from Claude Code yet.\n");
         match &s.hook {
             HookStatus::Installed { .. } => t.push_str("  The hook is installed; limits appear after the next response in Claude Code\n  (Pro and Max plans only).\n"),
-            _ => t.push_str("  Run `ctc hook install` to get the real 5-hour and weekly percentages.\n"),
+            _ => t.push_str("  Run `paceline hook install` to get the real 5-hour and weekly percentages.\n"),
         }
         if let Some(b) = &s.block_estimate {
             let _ = writeln!(t, "  Estimated 5-hour window: resets about {} · {} tokens · ${:.2}", clock(b.end, offset), fmt_tokens(b.totals.total_tokens), b.totals.cost_usd);
@@ -292,7 +295,7 @@ pub fn render_status(s: &Summary, offset: chrono::FixedOffset) -> String {
         let _ = writeln!(t, "{:<16} {} {:>5.1}%   resets in {}", w.label, bar(w.used_pct, 20), w.used_pct, fmt_duration(w.resets_at - now));
     }
     if !s.week_models.is_empty() {
-        let parts: Vec<String> = s.week_models.iter().map(|m| format!("{} {:.0}%", m.family, m.share_pct)).collect();
+        let parts: Vec<String> = s.week_models.iter().filter(|m| m.share_pct >= 0.5).map(|m| format!("{} {:.0}%", m.family, m.share_pct)).collect();
         let _ = writeln!(t, "        this week by model (share of API-equivalent cost): {}", parts.join(" · "));
     }
     if let Some(age) = s.limits_age_secs.filter(|a| *a > 900) {

@@ -157,9 +157,9 @@
     const t = s.report.totals;
     const unpriced = t.unpriced_tokens > 0 ? ` ${fmtTokens(t.unpriced_tokens)} tokens from models without a known price are not included.` : "";
     $("stats").replaceChildren(
-      stat("Burn, last 30 min", fmtTokens(s.burn.tokens_per_min), " /min", "Tokens per minute over the last 30 minutes, cache reads included."),
+      stat("Burn (30 min)", fmtTokens(s.burn.tokens_per_min), " /min", "Tokens per minute over the last 30 minutes, cache reads included."),
       stat("API-equivalent", fmtUsd(s.burn.cost_per_hour), " /h", "What the last 30 minutes would cost per hour at API list prices."),
-      stat(`${RANGE_NAME[s.report.days] || `${s.report.days} days`} · ${fmtTokens(t.total_tokens)} tok`, fmtUsd(t.cost_usd), null, `API-equivalent cost and tokens for the selected period.${unpriced}`));
+      stat(`${RANGE_NAME[s.report.days] || `${s.report.days} days`} · ${fmtTokens(t.total_tokens)}`, fmtUsd(t.cost_usd), null, `API-equivalent cost and tokens for the selected period.${unpriced}`));
   }
 
   // ---------- lists ----------
@@ -293,7 +293,9 @@
       : s.hook.state === "other"
         ? `Another statusline is configured (${s.hook.command}). Enabling keeps it working.`
         : "Adds one entry to ~/.claude/settings.json. A backup is kept next to it.";
-    if (installed && /\/target\/(debug|release)\//.test(s.hook.command || "")) {
+    if (installed && /--ctc-hook/.test(s.hook.command || "")) {
+      detail = "Installed by an older build. Remove it and enable live limits again to keep the numbers updating.";
+    } else if (installed && /\/target\/(debug|release)\//.test(s.hook.command || "")) {
       detail += " It points at a development build: open the app from /Applications and enable it again there.";
     } else if (dev && !installed) {
       detail += " This is a development build; enable from the installed app instead.";

@@ -11,7 +11,13 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 /// Present in every command line this tool installs.
-pub const MARKER: &str = "--ctc-hook";
+pub const MARKER: &str = "--paceline-hook";
+/// Marker written by builds from before the rename to Paceline.
+pub const LEGACY_MARKER: &str = "--ctc-hook";
+
+fn is_ours(command: &str) -> bool {
+    command.contains(MARKER) || command.contains(LEGACY_MARKER)
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -71,7 +77,7 @@ pub fn chained_command(paths: &Paths) -> Option<String> {
 pub fn status(paths: &Paths) -> HookStatus {
     let Ok(root) = read_settings(&paths.settings_file()) else { return HookStatus::NotInstalled };
     match root.get("statusLine").and_then(command_of) {
-        Some(cmd) if cmd.contains(MARKER) => HookStatus::Installed { command: cmd.to_string(), chained: chained_command(paths) },
+        Some(cmd) if is_ours(cmd) => HookStatus::Installed { command: cmd.to_string(), chained: chained_command(paths) },
         Some(cmd) => HookStatus::Other { command: cmd.to_string() },
         None => HookStatus::NotInstalled,
     }
@@ -81,13 +87,13 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// Point Claude Code's statusline at `exe statusline --ctc-hook`.
+/// Point Claude Code's statusline at `exe statusline --paceline-hook`.
 pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
     let settings_path = paths.settings_file();
     let mut root = read_settings(&settings_path)?;
     let existing = root.get("statusLine").cloned();
 
-    let ours = existing.as_ref().and_then(command_of).is_some_and(|c| c.contains(MARKER));
+    let ours = existing.as_ref().and_then(command_of).is_some_and(is_ours);
     if !ours {
         match &existing {
             Some(orig) if command_of(orig).is_some() => {
@@ -98,7 +104,7 @@ pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
             }
         }
         // One-time safety copy of the untouched settings file.
-        let backup = settings_path.with_extension("json.ctc-backup");
+        let backup = settings_path.with_extension("json.paceline-backup");
         if settings_path.exists() && !backup.exists() {
             std::fs::copy(&settings_path, &backup).ok();
         }
@@ -126,7 +132,7 @@ pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
 pub fn uninstall(paths: &Paths) -> Result<bool> {
     let settings_path = paths.settings_file();
     let mut root = read_settings(&settings_path)?;
-    let ours = root.get("statusLine").and_then(command_of).is_some_and(|c| c.contains(MARKER));
+    let ours = root.get("statusLine").and_then(command_of).is_some_and(is_ours);
     if !ours {
         return Ok(false);
     }
@@ -163,9 +169,9 @@ mod tests {
         let p = paths(dir.path());
         assert_eq!(status(&p), HookStatus::NotInstalled);
 
-        let out = install(&p, Path::new("/Applications/Claude Tokens Counter.app/Contents/MacOS/app")).unwrap();
+        let out = install(&p, Path::new("/Applications/Paceline.app/Contents/MacOS/paceline")).unwrap();
         assert!(!out.wrapped_existing);
-        assert_eq!(out.command, "'/Applications/Claude Tokens Counter.app/Contents/MacOS/app' statusline --ctc-hook");
+        assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
         assert_eq!(settings(&p)["statusLine"]["type"], "command");
         assert!(matches!(status(&p), HookStatus::Installed { chained: None, .. }));
 
@@ -186,9 +192,9 @@ mod tests {
         std::fs::write(p.settings_file(), original).unwrap();
         assert_eq!(status(&p), HookStatus::Other { command: "~/.claude/statusline.sh".into() });
 
-        let out = install(&p, Path::new("/usr/local/bin/ctc")).unwrap();
+        let out = install(&p, Path::new("/usr/local/bin/paceline")).unwrap();
         assert!(out.wrapped_existing);
-        assert!(out.command.ends_with("--ctc-hook --chain"));
+        assert!(out.command.ends_with("--paceline-hook --chain"));
         let s = settings(&p);
         assert_eq!(s["statusLine"]["padding"], 2, "other options survive");
         assert_eq!(s["model"], "opus");
@@ -197,12 +203,12 @@ mod tests {
         let text = std::fs::read_to_string(p.settings_file()).unwrap();
         assert!(text.find("\"model\"").unwrap() < text.find("\"statusLine\"").unwrap());
         assert_eq!(chained_command(&p).as_deref(), Some("~/.claude/statusline.sh"));
-        assert_eq!(std::fs::read_to_string(p.settings_file().with_extension("json.ctc-backup")).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(p.settings_file().with_extension("json.paceline-backup")).unwrap(), original);
 
         // Re-installing (e.g. the app moved) keeps the saved original.
-        let again = install(&p, Path::new("/opt/it's here/ctc")).unwrap();
+        let again = install(&p, Path::new("/opt/it's here/paceline")).unwrap();
         assert!(again.wrapped_existing);
-        assert_eq!(again.command, r"'/opt/it'\''s here/ctc' statusline --ctc-hook --chain");
+        assert_eq!(again.command, r"'/opt/it'\''s here/paceline' statusline --paceline-hook --chain");
         assert_eq!(chained_command(&p).as_deref(), Some("~/.claude/statusline.sh"));
 
         assert!(uninstall(&p).unwrap());
@@ -210,6 +216,20 @@ mod tests {
         assert_eq!(s["statusLine"]["command"], "~/.claude/statusline.sh");
         assert_eq!(s["statusLine"]["padding"], 2);
         assert_eq!(status(&p), HookStatus::Other { command: "~/.claude/statusline.sh".into() });
+    }
+
+    #[test]
+    fn hook_from_before_the_rename_is_recognised_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let old = r#"{"statusLine":{"type":"command","command":"'/old/target/debug/claude-tokens-counter' statusline --ctc-hook"}}"#;
+        std::fs::write(p.settings_file(), old).unwrap();
+        assert!(matches!(status(&p), HookStatus::Installed { .. }));
+        let out = install(&p, Path::new("/Applications/Paceline.app/Contents/MacOS/paceline")).unwrap();
+        assert!(!out.wrapped_existing, "our own old hook is not a statusline to chain");
+        assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
+        assert!(uninstall(&p).unwrap());
+        assert!(settings(&p).get("statusLine").is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Usage engine for Claude Tokens Counter.
+//! Usage engine for Paceline.
 //!
 //! Two data sources, neither of which touches credentials or the network:
 //!

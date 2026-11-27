@@ -1,5 +1,5 @@
 [package]
-name = "claude-tokens-counter"
+name = "paceline"
 description = "Claude usage limits, forecast and cost per project in the macOS menu bar"
 version.workspace = true
 edition.workspace = true
@@ -13,7 +13,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
-ctc-core = { path = "../crates/core" }
-ctc-cli = { path = "../crates/cli" }
+paceline-core = { path = "../crates/core" }
+paceline-cli = { path = "../crates/cli" }
 serde.workspace = true
 serde_json.workspace = true

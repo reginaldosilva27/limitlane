@@ -4,11 +4,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use ctc_core::alerts::{self, AlertState};
-use ctc_core::config::Config;
-use ctc_core::hook::{self, HookStatus, InstallOutcome};
-use ctc_core::placement::{self, Screen};
-use ctc_core::{icon, Engine, Paths, Summary};
+use paceline_core::alerts::{self, AlertState};
+use paceline_core::config::Config;
+use paceline_core::hook::{self, HookStatus, InstallOutcome};
+use paceline_core::placement::{self, Screen};
+use paceline_core::{icon, Engine, Paths, Summary};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -38,7 +38,7 @@ struct AppState {
 fn compute(state: &AppState) -> Summary {
     let days = state.range_days.load(Ordering::Relaxed).max(1);
     let mut engine = state.engine.lock().unwrap_or_else(|e| e.into_inner());
-    engine.summary(days, ctc_core::now(), ctc_core::local_offset())
+    engine.summary(days, paceline_core::now(), paceline_core::local_offset())
 }
 
 fn err_string(e: impl std::fmt::Display) -> String {
@@ -124,17 +124,17 @@ fn quit(app: AppHandle) {
 
 fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
-        eprintln!("[ctc] menu bar item not found");
+        eprintln!("[paceline] menu bar item not found");
         return;
     };
     let pixels = icon::render_meter(summary.five_hour_pct(), summary.seven_day_pct());
     if let Err(e) = tray.set_icon(Some(Image::new_owned(pixels, icon::WIDTH, icon::HEIGHT))) {
-        eprintln!("[ctc] could not set the menu bar icon: {e}");
+        eprintln!("[paceline] could not set the menu bar icon: {e}");
     }
     let _ = tray.set_icon_as_template(true);
     let title = summary.menu_bar_title(config.menu_bar);
     if let Err(e) = tray.set_title(if title.is_empty() { None } else { Some(title) }) {
-        eprintln!("[ctc] could not set the menu bar title: {e}");
+        eprintln!("[paceline] could not set the menu bar title: {e}");
     }
 
     let line = |label: &str, v: Option<f64>| match v {
@@ -175,7 +175,7 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
         .unwrap_or((384.0, 640.0));
     let place = placement::popover_origin(icon_pos.x, icon_pos.y, icon_size.width, icon_size.height, &screens, win_w, win_h);
     if cfg!(debug_assertions) {
-        eprintln!("[ctc] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
+        eprintln!("[paceline] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
     }
 
     // Follow the user to whichever Space is active, including full-screen apps.
@@ -208,7 +208,7 @@ fn refresh(app: &AppHandle) {
     let summary = compute(&state);
     update_tray(app, &summary, &config);
     if cfg!(debug_assertions) {
-        eprintln!("[ctc] refresh in {:?}: title {:?}, {} responses in range", started.elapsed(), summary.menu_bar_title(config.menu_bar), summary.report.totals.messages);
+        eprintln!("[paceline] refresh in {:?}: title {:?}, {} responses in range", started.elapsed(), summary.menu_bar_title(config.menu_bar), summary.report.totals.messages);
     }
 
     let fired = {
@@ -247,7 +247,7 @@ fn main() {
     // CLI mode: any argument that is not a macOS launch artefact.
     let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with("-psn_")).collect();
     if !args.is_empty() {
-        std::process::exit(ctc_cli::run(args));
+        std::process::exit(paceline_cli::run(args));
     }
 
     let paths = Paths::from_env();
@@ -272,15 +272,15 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let refresh_item = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Claude Tokens Counter", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Paceline", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &refresh_item, &quit_item])?;
 
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::new_owned(icon::render_meter(None, None), icon::WIDTH, icon::HEIGHT))
                 .icon_as_template(true)
                 // Placeholder until the first refresh, so the item is easy to spot.
-                .title("Claude …")
-                .tooltip("Claude Tokens Counter")
+                .title("Paceline")
+                .tooltip("Paceline")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -297,7 +297,7 @@ fn main() {
                     }
                 })
                 .build(app)?;
-            eprintln!("[ctc] menu bar item created");
+            eprintln!("[paceline] menu bar item created");
 
             if let Some(window) = app.get_webview_window(WINDOW) {
                 let handle = app.handle().clone();
@@ -317,5 +317,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to start Claude Tokens Counter");
+        .expect("failed to start Paceline");
 }

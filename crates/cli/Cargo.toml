@@ -1,6 +1,6 @@
 [package]
-name = "ctc-cli"
-description = "Command-line companion for Claude Tokens Counter"
+name = "paceline-cli"
+description = "Command-line companion for Paceline"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,11 @@ license.workspace = true
 path = "src/lib.rs"
 
 [[bin]]
-name = "ctc"
+name = "paceline-cli"
 path = "src/main.rs"
 
 [dependencies]
-ctc-core = { path = "../core" }
+paceline-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

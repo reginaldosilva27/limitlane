@@ -1,4 +1,4 @@
-//! User configuration (`~/.claudetokenscounter/config.json`).
+//! User configuration (`~/.paceline/config.json`).
 
 use crate::paths::{write_atomic, Paths};
 use crate::pricing::Rate;
