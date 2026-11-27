@@ -16,7 +16,7 @@ impl Paths {
     /// * `CLAUDE_CONFIG_DIR` (comma-separated) overrides the Claude directories.
     /// * `PACELINE_HOME` overrides this tool's state directory.
     pub fn from_env() -> Self {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+        let home = home_dir();
         let claude_dirs = match std::env::var("CLAUDE_CONFIG_DIR") {
             Ok(v) if !v.trim().is_empty() => v.split(',').map(|s| PathBuf::from(s.trim())).collect(),
             _ => vec![home.join(".claude"), home.join(".config").join("claude")],
@@ -61,6 +61,14 @@ impl Paths {
     pub fn original_statusline_file(&self) -> PathBuf {
         self.state_dir.join("original_statusline.json")
     }
+}
+
+/// The user's home folder. On Windows this is `%USERPROFILE%`, the folder
+/// Claude Code means by `~`; `HOME` is only a fallback there.
+pub fn home_dir() -> PathBuf {
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+    let found = if cfg!(windows) { var("USERPROFILE").or_else(|| var("HOME")) } else { var("HOME") };
+    found.map(PathBuf::from).unwrap_or_default()
 }
 
 /// Carry settings and limit history over from the directory used before the

@@ -30,7 +30,8 @@ impl Screen {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Placement {
-    /// Top-left corner of the popover, in points.
+    /// Top-left corner of the popover: points from `popover_origin`, physical
+    /// pixels from `tray_popover_origin`.
     pub x: f64,
     pub y: f64,
     /// Index into the `screens` slice of the display that holds the icon.
@@ -86,6 +87,28 @@ pub fn popover_origin(icon_x: f64, icon_y: f64, icon_w: f64, icon_h: f64, screen
         y = y.clamp(t, (b - win_h - MARGIN).max(t));
     }
     Placement { x, y, screen: found.map(|(i, _)| i) }
+}
+
+/// Windows: the tray sits in the taskbar, normally at the bottom of the
+/// display, and windows are positioned in physical pixels in one space shared
+/// by all displays, so nothing needs converting. The popover opens above an
+/// item in the lower half of its display and below one in the upper half.
+///
+/// The icon rectangle and the result are in physical pixels; `win_w` and
+/// `win_h` are the popover size in points.
+pub fn tray_popover_origin(icon_x: f64, icon_y: f64, icon_w: f64, icon_h: f64, screens: &[Screen], win_w: f64, win_h: f64) -> Placement {
+    let (cx, cy) = (icon_x + icon_w / 2.0, icon_y + icon_h / 2.0);
+    let found = screens.iter().position(|s| cx >= s.x && cx < s.x + s.width && cy >= s.y && cy < s.y + s.height);
+    let Some(s) = found.map(|i| screens[i]) else {
+        return Placement { x: cx - win_w / 2.0, y: icon_y - GAP - win_h, screen: None };
+    };
+    let scale = if s.scale > 0.0 { s.scale } else { 1.0 };
+    let (w, h, gap, margin) = (win_w * scale, win_h * scale, GAP * scale, MARGIN * scale);
+    let open_above = cy >= s.y + s.height / 2.0;
+    let y = if open_above { icon_y - gap - h } else { icon_y + icon_h + gap };
+    let x = (cx - w / 2.0).clamp(s.x + margin, (s.x + s.width - w - margin).max(s.x + margin));
+    let y = y.clamp(s.y, (s.y + s.height - h).max(s.y));
+    Placement { x, y, screen: found }
 }
 
 #[cfg(test)]
@@ -192,5 +215,37 @@ mod tests {
         let p = popover_origin(5000.0, 0.0, 100.0, 48.0, &[], W, H);
         assert_eq!(p.screen, None);
         assert_eq!(p.x, 5050.0 - W / 2.0);
+    }
+
+    /// 1920x1080 at 1.5x with a 72 px taskbar at the bottom.
+    fn win_laptop() -> Screen {
+        Screen { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0, scale: 1.5 }
+    }
+
+    #[test]
+    fn windows_taskbar_at_the_bottom_opens_above() {
+        // Tray icon 36x36 px near the right end of the taskbar.
+        let p = tray_popover_origin(1700.0, 1062.0 - 36.0, 36.0, 36.0, &[win_laptop()], W, H);
+        assert_eq!(p.screen, Some(0));
+        let (w, h) = (W * 1.5, H * 1.5);
+        assert_eq!(p.y, 1026.0 - 6.0 - h, "bottom edge sits just above the icon");
+        assert_eq!(p.x, 1920.0 - w - 12.0, "clamped to the right margin");
+    }
+
+    #[test]
+    fn windows_taskbar_at_the_top_opens_below() {
+        let p = tray_popover_origin(800.0, 4.0, 32.0, 32.0, &[win_laptop()], W, H);
+        assert_eq!(p.y, 36.0 + 6.0);
+        assert_eq!(p.x, 816.0 - W * 1.5 / 2.0);
+    }
+
+    #[test]
+    fn windows_second_display_uses_its_own_scale() {
+        // 2560x1440 at 1x to the right of the laptop.
+        let ext = Screen { x: 1920.0, y: 0.0, width: 2560.0, height: 1440.0, scale: 1.0 };
+        let p = tray_popover_origin(4300.0, 1400.0, 24.0, 24.0, &[win_laptop(), ext], W, H);
+        assert_eq!(p.screen, Some(1));
+        assert_eq!(p.y, 1400.0 - 4.0 - H);
+        assert!(p.x >= 1920.0 && p.x + W <= 1920.0 + 2560.0, "{p:?}");
     }
 }

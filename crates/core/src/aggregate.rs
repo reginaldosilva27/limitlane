@@ -83,9 +83,11 @@ pub struct Report {
     pub by_session: Vec<SessionRow>,
 }
 
+/// Last path component. Accepts `/` and Windows `\` separators.
 pub fn display_name(project: &str) -> String {
-    let trimmed = project.trim_end_matches('/');
-    trimmed.rsplit('/').next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
+    let is_sep = |c: char| c == '/' || c == '\\';
+    let trimmed = project.trim_end_matches(is_sep);
+    trimmed.rsplit(is_sep).next().filter(|s| !s.is_empty()).unwrap_or(trimmed).to_string()
 }
 
 /// Start (epoch seconds) of the local day that is `days - 1` days before the
@@ -282,6 +284,15 @@ mod tests {
 
     fn brt() -> FixedOffset {
         FixedOffset::west_opt(3 * 3600).unwrap()
+    }
+
+    #[test]
+    fn display_name_handles_both_separators() {
+        assert_eq!(display_name("/Users/me/code/alpha"), "alpha");
+        assert_eq!(display_name("/Users/me/code/alpha/"), "alpha");
+        assert_eq!(display_name(r"C:\Users\me\code\beta"), "beta");
+        assert_eq!(display_name(r"C:\Users\me\code\beta\"), "beta");
+        assert_eq!(display_name("gamma"), "gamma");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 [package]
 name = "paceline"
-description = "Claude usage limits, forecast and cost per project in the macOS menu bar"
+description = "Claude usage limits, forecast and cost per project in the macOS menu bar and the Windows notification area"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,3 +17,6 @@ paceline-core = { path = "../crates/core" }
 paceline-cli = { path = "../crates/cli" }
 serde.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_Console"] }

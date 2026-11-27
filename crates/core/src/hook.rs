@@ -4,7 +4,7 @@
 //! saved and our hook runs it afterwards, so the terminal shows exactly what
 //! it showed before. Uninstalling restores the original.
 
-use crate::paths::{write_atomic, Paths};
+use crate::paths::{home_dir, write_atomic, Paths};
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
@@ -44,10 +44,12 @@ fn read_settings(path: &Path) -> Result<Map<String, Value>> {
         return Ok(Map::new());
     }
     let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    // Some Windows editors save JSON with a byte order mark.
+    let text = text.trim_start_matches('\u{feff}');
     if text.trim().is_empty() {
         return Ok(Map::new());
     }
-    match serde_json::from_str::<Value>(&text) {
+    match serde_json::from_str::<Value>(text) {
         Ok(Value::Object(m)) => Ok(m),
         Ok(_) => Err(anyhow!("{} is not a JSON object", path.display())),
         // Never overwrite a file we cannot parse.
@@ -87,6 +89,37 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// The executable as written in the statusline command.
+fn exe_for_command(exe: &Path) -> String {
+    if cfg!(windows) {
+        windows_exe(&exe.to_string_lossy(), &home_dir().to_string_lossy())
+    } else {
+        shell_quote(&exe.to_string_lossy())
+    }
+}
+
+/// On Windows, Claude Code runs the statusline in Git Bash when it is
+/// installed and in PowerShell otherwise, and the two shells share no quoting
+/// syntax. A path without spaces works unquoted in both when written with
+/// forward slashes (Git Bash reads backslashes as escapes), and `~` expands to
+/// the home folder in both, which also covers a user name with spaces.
+fn windows_exe(exe: &str, home: &str) -> String {
+    let exe = exe.strip_prefix(r"\\?\").unwrap_or(exe).replace('\\', "/");
+    let home = home.replace('\\', "/");
+    let home = home.trim_end_matches('/');
+    let under_home = !home.is_empty()
+        && exe.get(..home.len()).is_some_and(|p| p.eq_ignore_ascii_case(home))
+        && exe[home.len()..].starts_with('/');
+    let short = if under_home { format!("~{}", &exe[home.len()..]) } else { exe.clone() };
+    let plain = |s: &str| !s.contains(|c: char| c.is_whitespace() || "'\"`$&;|<>(){}".contains(c));
+    if plain(&short) {
+        short
+    } else {
+        // Works in Git Bash only; PowerShell would need `& "..."`.
+        format!("\"{exe}\"")
+    }
+}
+
 /// Point Claude Code's statusline at `exe statusline --paceline-hook`.
 pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
     let settings_path = paths.settings_file();
@@ -111,7 +144,7 @@ pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
     }
     let wrapped = chained_command(paths).is_some();
 
-    let mut command = format!("{} statusline {MARKER}", shell_quote(&exe.to_string_lossy()));
+    let mut command = format!("{} statusline {MARKER}", exe_for_command(exe));
     if wrapped {
         command.push_str(" --chain");
     }
@@ -159,6 +192,13 @@ mod tests {
         Paths { claude_dirs: vec![claude], state_dir: dir.join("state") }
     }
 
+    const MAC_EXE: &str = "/Applications/Paceline.app/Contents/MacOS/paceline";
+
+    /// The command `install` writes for `exe` on the platform running the tests.
+    fn hook_cmd(exe: &str) -> String {
+        format!("{} statusline {MARKER}", exe_for_command(Path::new(exe)))
+    }
+
     fn settings(p: &Paths) -> Value {
         serde_json::from_str(&std::fs::read_to_string(p.settings_file()).unwrap()).unwrap()
     }
@@ -169,9 +209,12 @@ mod tests {
         let p = paths(dir.path());
         assert_eq!(status(&p), HookStatus::NotInstalled);
 
-        let out = install(&p, Path::new("/Applications/Paceline.app/Contents/MacOS/paceline")).unwrap();
+        let out = install(&p, Path::new(MAC_EXE)).unwrap();
         assert!(!out.wrapped_existing);
-        assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
+        assert_eq!(out.command, hook_cmd(MAC_EXE));
+        if cfg!(not(windows)) {
+            assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
+        }
         assert_eq!(settings(&p)["statusLine"]["type"], "command");
         assert!(matches!(status(&p), HookStatus::Installed { chained: None, .. }));
 
@@ -208,7 +251,10 @@ mod tests {
         // Re-installing (e.g. the app moved) keeps the saved original.
         let again = install(&p, Path::new("/opt/it's here/paceline")).unwrap();
         assert!(again.wrapped_existing);
-        assert_eq!(again.command, r"'/opt/it'\''s here/paceline' statusline --paceline-hook --chain");
+        assert_eq!(again.command, format!("{} --chain", hook_cmd("/opt/it's here/paceline")));
+        if cfg!(not(windows)) {
+            assert_eq!(again.command, r"'/opt/it'\''s here/paceline' statusline --paceline-hook --chain");
+        }
         assert_eq!(chained_command(&p).as_deref(), Some("~/.claude/statusline.sh"));
 
         assert!(uninstall(&p).unwrap());
@@ -225,11 +271,36 @@ mod tests {
         let old = r#"{"statusLine":{"type":"command","command":"'/old/target/debug/claude-tokens-counter' statusline --ctc-hook"}}"#;
         std::fs::write(p.settings_file(), old).unwrap();
         assert!(matches!(status(&p), HookStatus::Installed { .. }));
-        let out = install(&p, Path::new("/Applications/Paceline.app/Contents/MacOS/paceline")).unwrap();
+        let out = install(&p, Path::new(MAC_EXE)).unwrap();
         assert!(!out.wrapped_existing, "our own old hook is not a statusline to chain");
-        assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
+        assert_eq!(out.command, hook_cmd(MAC_EXE));
         assert!(uninstall(&p).unwrap());
         assert!(settings(&p).get("statusLine").is_none());
+    }
+
+    #[test]
+    fn windows_paths_work_in_git_bash_and_powershell() {
+        let home = r"C:\Users\Ana";
+        assert_eq!(windows_exe(r"C:\Users\Ana\AppData\Local\Paceline\paceline.exe", home), "~/AppData/Local/Paceline/paceline.exe");
+        // Drive letters and folder names are case-insensitive.
+        assert_eq!(windows_exe(r"c:\users\ana\AppData\Local\Paceline\paceline.exe", home), "~/AppData/Local/Paceline/paceline.exe");
+        // A user name with a space is hidden behind `~`.
+        assert_eq!(windows_exe(r"C:\Users\Ana Lima\AppData\Local\Paceline\paceline.exe", r"C:\Users\Ana Lima\"), "~/AppData/Local/Paceline/paceline.exe");
+        // Outside the home folder: forward slashes, unquoted when possible.
+        assert_eq!(windows_exe(r"D:\tools\paceline.exe", home), "D:/tools/paceline.exe");
+        assert_eq!(windows_exe(r"\\?\D:\tools\paceline.exe", home), "D:/tools/paceline.exe");
+        assert_eq!(windows_exe(r"C:\Program Files\Paceline\paceline.exe", home), r#""C:/Program Files/Paceline/paceline.exe""#);
+        // A sibling folder that merely starts with the same name is not home.
+        assert_eq!(windows_exe(r"C:\Users\Anabel\paceline.exe", home), "C:/Users/Anabel/paceline.exe");
+    }
+
+    #[test]
+    fn settings_with_a_byte_order_mark_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        std::fs::write(p.settings_file(), "\u{feff}{\"model\": \"opus\"}").unwrap();
+        install(&p, Path::new(MAC_EXE)).unwrap();
+        assert_eq!(settings(&p)["model"], "opus");
     }
 
     #[test]

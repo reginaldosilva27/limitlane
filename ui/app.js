@@ -295,8 +295,8 @@
         : "Adds one entry to ~/.claude/settings.json. A backup is kept next to it.";
     if (installed && /--ctc-hook/.test(s.hook.command || "")) {
       detail = "Installed by an older build. Remove it and enable live limits again to keep the numbers updating.";
-    } else if (installed && /\/target\/(debug|release)\//.test(s.hook.command || "")) {
-      detail += " It points at a development build: open the app from /Applications and enable it again there.";
+    } else if (installed && /[\\/]target[\\/](debug|release)[\\/]/.test(s.hook.command || "")) {
+      detail += " It points at a development build: open the installed app and enable it again there.";
     } else if (dev && !installed) {
       detail += " This is a development build; enable from the installed app instead.";
     }
@@ -321,6 +321,8 @@
       return toast(String(e));
     }
     await loadInfo();
+    // Only the macOS menu bar can show text next to the icon.
+    $("cfg-menu-bar").closest(".field").hidden = !!(state.info && state.info.platform && state.info.platform !== "macos");
     const c = state.config;
     $("cfg-menu-bar").value = c.menu_bar;
     $("cfg-notifications").checked = c.notifications;

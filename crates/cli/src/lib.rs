@@ -222,12 +222,50 @@ fn statusline(paths: &Paths, chain: bool, now: i64) {
 }
 
 fn run_chained(cmd: &str, payload: &[u8]) -> bool {
-    use std::process::{Command, Stdio};
-    let Ok(mut child) = Command::new("sh").arg("-c").arg(cmd).stdin(Stdio::piped()).spawn() else { return false };
+    use std::process::Stdio;
+    let Ok(mut child) = shell_command(cmd).stdin(Stdio::piped()).spawn() else { return false };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = stdin.write_all(payload);
     }
     child.wait().is_ok()
+}
+
+/// Run `cmd` the way Claude Code runs a statusline command.
+#[cfg(not(windows))]
+fn shell_command(cmd: &str) -> std::process::Command {
+    let mut c = std::process::Command::new("sh");
+    c.arg("-c").arg(cmd);
+    c
+}
+
+/// On Windows Claude Code uses Git Bash when it is installed and PowerShell
+/// otherwise, so the user's original command was written for one of those.
+#[cfg(windows)]
+fn shell_command(cmd: &str) -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+    use std::path::PathBuf;
+    // The app is a GUI program; without this every refresh would flash a console window.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    let mut bash_candidates: Vec<PathBuf> = var("CLAUDE_CODE_GIT_BASH_PATH").into_iter().collect();
+    for root in ["ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"] {
+        bash_candidates.extend(var(root).map(|d| d.join(r"Git\bin\bash.exe")));
+    }
+    bash_candidates.extend(var("LOCALAPPDATA").map(|d| d.join(r"Programs\Git\bin\bash.exe")));
+    let mut c = match bash_candidates.into_iter().find(|p| p.is_file()) {
+        Some(bash) => {
+            let mut c = std::process::Command::new(bash);
+            c.arg("-c").arg(cmd);
+            c
+        }
+        None => {
+            let mut c = std::process::Command::new("powershell.exe");
+            c.args(["-NoProfile", "-NonInteractive", "-Command", cmd]);
+            c
+        }
+    };
+    c.creation_flags(CREATE_NO_WINDOW);
+    c
 }
 
 /// The line shown in Claude Code when no other statusline was configured.

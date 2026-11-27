@@ -1,6 +1,6 @@
-//! Menu bar app. The same binary also answers CLI commands (`statusline`,
-//! `status`, `export`, ...) so it can serve as Claude Code's statusline hook
-//! without shipping a second executable.
+//! Menu bar (macOS) and notification-area (Windows) app. The same binary also
+//! answers CLI commands (`statusline`, `status`, `export`, ...) so it can serve
+//! as Claude Code's statusline hook without shipping a second executable.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, Position, WebviewWindow, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt;
 
@@ -93,17 +93,24 @@ struct AppInfo {
     /// themselves at login or be the long-term statusline hook.
     dev_build: bool,
     launch_at_login: bool,
+    /// `macos`, `windows`, ...: the popover hides options a platform lacks.
+    platform: &'static str,
 }
 
 #[tauri::command]
 fn app_info(app: AppHandle) -> AppInfo {
-    AppInfo { version: env!("CARGO_PKG_VERSION"), dev_build: cfg!(debug_assertions), launch_at_login: app.autolaunch().is_enabled().unwrap_or(false) }
+    AppInfo {
+        version: env!("CARGO_PKG_VERSION"),
+        dev_build: cfg!(debug_assertions),
+        launch_at_login: app.autolaunch().is_enabled().unwrap_or(false),
+        platform: std::env::consts::OS,
+    }
 }
 
 #[tauri::command]
 fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<bool, String> {
     if enabled && cfg!(debug_assertions) {
-        return Err("This is a development build. Install the app in /Applications and turn this on there.".into());
+        return Err("This is a development build. Install the app and turn this on there.".into());
     }
     let auto = app.autolaunch();
     if enabled { auto.enable() } else { auto.disable() }.map_err(err_string)?;
@@ -122,31 +129,44 @@ fn quit(app: AppHandle) {
 
 // ---------- tray ----------
 
+/// A tinted template on macOS; a coloured square on Windows, which neither
+/// tints tray icons nor shows text next to them.
+fn tray_image(five_hour: Option<f64>, seven_day: Option<f64>) -> Image<'static> {
+    if cfg!(target_os = "macos") {
+        Image::new_owned(icon::render_meter(five_hour, seven_day), icon::WIDTH, icon::HEIGHT)
+    } else {
+        Image::new_owned(icon::render_meter_color(five_hour, seven_day), icon::SQUARE, icon::SQUARE)
+    }
+}
+
 fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
         eprintln!("[paceline] menu bar item not found");
         return;
     };
-    let pixels = icon::render_meter(summary.five_hour_pct(), summary.seven_day_pct());
-    if let Err(e) = tray.set_icon(Some(Image::new_owned(pixels, icon::WIDTH, icon::HEIGHT))) {
+    if let Err(e) = tray.set_icon(Some(tray_image(summary.five_hour_pct(), summary.seven_day_pct()))) {
         eprintln!("[paceline] could not set the menu bar icon: {e}");
     }
-    let _ = tray.set_icon_as_template(true);
-    let title = summary.menu_bar_title(config.menu_bar);
-    if let Err(e) = tray.set_title(if title.is_empty() { None } else { Some(title) }) {
-        eprintln!("[paceline] could not set the menu bar title: {e}");
+    if cfg!(target_os = "macos") {
+        let _ = tray.set_icon_as_template(true);
+        let title = summary.menu_bar_title(config.menu_bar);
+        if let Err(e) = tray.set_title(if title.is_empty() { None } else { Some(title) }) {
+            eprintln!("[paceline] could not set the menu bar title: {e}");
+        }
     }
 
     let line = |label: &str, v: Option<f64>| match v {
         Some(p) => format!("{label}: {p:.0}%"),
         None => format!("{label}: no data"),
     };
-    let tip = format!("{}\n{}", line("5-hour", summary.five_hour_pct()), line("Weekly", summary.seven_day_pct()));
+    // On Windows the tooltip is the only place the numbers appear as text.
+    let tip = format!("Paceline\n{}\n{}", line("5-hour", summary.five_hour_pct()), line("Weekly", summary.seven_day_pct()));
     let _ = tray.set_tooltip(Some(tip));
 }
 
-/// Show the popover centred under the tray icon, or hide it if it is open.
-/// `icon_pos` and `icon_size` are the tray item's rectangle in physical pixels.
+/// Show the popover next to the tray icon (under it on macOS, above the
+/// taskbar on Windows), or hide it if it is open. `icon_pos` and `icon_size`
+/// are the tray item's rectangle in physical pixels.
 fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: tauri::PhysicalSize<f64>) {
     let Some(window) = app.get_webview_window(WINDOW) else { return };
     let state = app.state::<AppState>();
@@ -173,7 +193,15 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
         .zip(window.scale_factor().ok())
         .map(|(size, scale)| (size.width as f64 / scale, size.height as f64 / scale))
         .unwrap_or((384.0, 640.0));
-    let place = placement::popover_origin(icon_pos.x, icon_pos.y, icon_size.width, icon_size.height, &screens, win_w, win_h);
+    let (place, position): (_, Position) = if cfg!(target_os = "macos") {
+        let p = placement::popover_origin(icon_pos.x, icon_pos.y, icon_size.width, icon_size.height, &screens, win_w, win_h);
+        // Points, not pixels: the only unit that is the same on every display.
+        (p, LogicalPosition::new(p.x, p.y).into())
+    } else {
+        // Windows positions windows in physical pixels shared by all displays.
+        let p = placement::tray_popover_origin(icon_pos.x, icon_pos.y, icon_size.width, icon_size.height, &screens, win_w, win_h);
+        (p, PhysicalPosition::new(p.x.round() as i32, p.y.round() as i32).into())
+    };
     if cfg!(debug_assertions) {
         eprintln!("[paceline] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
     }
@@ -181,12 +209,11 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
     // Follow the user to whichever Space is active, including full-screen apps.
     let _ = window.set_visible_on_all_workspaces(true);
     let _ = window.set_always_on_top(true);
-    // Points, not pixels: the only unit that is the same on every display.
-    let _ = window.set_position(LogicalPosition::new(place.x, place.y));
+    let _ = window.set_position(position);
     let _ = window.show();
     // Moving to a display with another pixel density can shift the window;
     // setting the position again once it is on that display settles it.
-    let _ = window.set_position(LogicalPosition::new(place.x, place.y));
+    let _ = window.set_position(position);
     let _ = window.set_focus();
     state.refresh_now.store(true, Ordering::Relaxed);
 }
@@ -243,10 +270,26 @@ fn spawn_refresh_loop(app: AppHandle) {
     });
 }
 
+/// The Windows build is a GUI program, so typing `paceline status` in a
+/// terminal would print nothing. Borrow the terminal's console in that case.
+/// When Claude Code runs the hook it passes pipes, which are left alone.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE};
+    // SAFETY: plain Win32 calls with constant arguments.
+    unsafe {
+        if GetStdHandle(STD_OUTPUT_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() {
     // CLI mode: any argument that is not a macOS launch artefact.
     let args: Vec<String> = std::env::args().skip(1).filter(|a| !a.starts_with("-psn_")).collect();
     if !args.is_empty() {
+        #[cfg(windows)]
+        attach_parent_console();
         std::process::exit(paceline_cli::run(args));
     }
 
@@ -276,8 +319,8 @@ fn main() {
             let menu = Menu::with_items(app, &[&open, &refresh_item, &quit_item])?;
 
             TrayIconBuilder::with_id(TRAY_ID)
-                .icon(Image::new_owned(icon::render_meter(None, None), icon::WIDTH, icon::HEIGHT))
-                .icon_as_template(true)
+                .icon(tray_image(None, None))
+                .icon_as_template(cfg!(target_os = "macos"))
                 // Placeholder until the first refresh, so the item is easy to spot.
                 .title("Paceline")
                 .tooltip("Paceline")
