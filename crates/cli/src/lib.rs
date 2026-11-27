@@ -1,20 +1,20 @@
-//! `paceline`: command-line companion. The menu bar app embeds this too, so the
+//! `limitlane`: command-line companion. The menu bar app embeds this too, so the
 //! app binary itself can act as the statusline hook.
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
-use paceline_core::aggregate::{Report, Totals};
-use paceline_core::alerts::fmt_duration;
-use paceline_core::forecast::{Basis, Forecast};
-use paceline_core::hook::{self, HookStatus};
-use paceline_core::limits::{self, StatuslineInput};
-use paceline_core::summary::{fmt_tokens, Engine, Summary};
-use paceline_core::Paths;
+use limitlane_core::aggregate::{Report, Totals};
+use limitlane_core::alerts::fmt_duration;
+use limitlane_core::forecast::{Basis, Forecast};
+use limitlane_core::hook::{self, HookStatus};
+use limitlane_core::limits::{self, StatuslineInput};
+use limitlane_core::summary::{fmt_tokens, Engine, Summary};
+use limitlane_core::Paths;
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 
 #[derive(Parser)]
-#[command(name = "paceline", version, about = "Claude usage in your terminal: limits, forecast, cost per project")]
+#[command(name = "limitlane", version, about = "Claude usage in your terminal: limits, forecast, cost per project")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -72,9 +72,11 @@ enum Command {
     },
     /// Statusline entry point called by Claude Code (reads JSON on stdin)
     Statusline {
-        #[arg(long = "paceline-hook", hide = true)]
+        #[arg(long = "limitlane-hook", hide = true)]
         marker: bool,
-        /// Marker used before the project was renamed; still accepted.
+        /// Markers used under earlier names; still accepted.
+        #[arg(long = "paceline-hook", hide = true)]
+        paceline_marker: bool,
         #[arg(long = "ctc-hook", hide = true)]
         legacy_marker: bool,
         /// Run the statusline that was configured before the hook
@@ -109,7 +111,7 @@ enum GroupBy {
 
 /// Run the CLI with `args` (without the program name). Returns the exit code.
 pub fn run(args: Vec<String>) -> i32 {
-    let cli = match Cli::try_parse_from(std::iter::once("paceline".to_string()).chain(args)) {
+    let cli = match Cli::try_parse_from(std::iter::once("limitlane".to_string()).chain(args)) {
         Ok(c) => c,
         Err(e) => {
             let _ = e.print();
@@ -119,20 +121,20 @@ pub fn run(args: Vec<String>) -> i32 {
     let paths = Paths::from_env();
     match execute(cli.command, paths) {
         Ok(text) => {
-            // Ignore broken pipes (`paceline export | head`).
+            // Ignore broken pipes (`limitlane export | head`).
             let _ = std::io::stdout().write_all(text.as_bytes());
             0
         }
         Err(e) => {
-            eprintln!("paceline: {e:#}");
+            eprintln!("limitlane: {e:#}");
             1
         }
     }
 }
 
 fn execute(command: Command, paths: Paths) -> Result<String> {
-    let now = paceline_core::now();
-    let offset = paceline_core::local_offset();
+    let now = limitlane_core::now();
+    let offset = limitlane_core::local_offset();
     let mut engine = Engine::new(paths.clone());
     Ok(match command {
         Command::Status { json } => {
@@ -184,7 +186,7 @@ fn execute(command: Command, paths: Paths) -> Result<String> {
                     }
                     t
                 }
-                HookStatus::Other { command } => format!("not installed (another statusline is configured: {command})\nRun `paceline hook install` to wrap it; it will keep rendering.\n"),
+                HookStatus::Other { command } => format!("not installed (another statusline is configured: {command})\nRun `limitlane hook install` to wrap it; it will keep rendering.\n"),
                 HookStatus::NotInstalled => "not installed\n".into(),
             },
         },
@@ -319,7 +321,7 @@ pub fn render_status(s: &Summary, offset: chrono::FixedOffset) -> String {
         t.push_str("Limits: no data from Claude Code yet.\n");
         match &s.hook {
             HookStatus::Installed { .. } => t.push_str("  The hook is installed; limits appear after the next response in Claude Code\n  (Pro and Max plans only).\n"),
-            _ => t.push_str("  Run `paceline hook install` to get the real 5-hour and weekly percentages.\n"),
+            _ => t.push_str("  Run `limitlane hook install` to get the real 5-hour and weekly percentages.\n"),
         }
         if let Some(b) = &s.block_estimate {
             let _ = writeln!(t, "  Estimated 5-hour window: resets about {} · {} tokens · ${:.2}", clock(b.end, offset), fmt_tokens(b.totals.total_tokens), b.totals.cost_usd);

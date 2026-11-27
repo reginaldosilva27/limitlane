@@ -11,12 +11,12 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 /// Present in every command line this tool installs.
-pub const MARKER: &str = "--paceline-hook";
-/// Marker written by builds from before the rename to Paceline.
-pub const LEGACY_MARKER: &str = "--ctc-hook";
+pub const MARKER: &str = "--limitlane-hook";
+/// Markers written by earlier builds, named Paceline and Claude Tokens Counter.
+pub const LEGACY_MARKERS: [&str; 2] = ["--paceline-hook", "--ctc-hook"];
 
 fn is_ours(command: &str) -> bool {
-    command.contains(MARKER) || command.contains(LEGACY_MARKER)
+    command.contains(MARKER) || LEGACY_MARKERS.iter().any(|m| command.contains(m))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -120,8 +120,20 @@ fn windows_exe(exe: &str, home: &str) -> String {
     }
 }
 
-/// Point Claude Code's statusline at `exe statusline --paceline-hook`.
+/// The program the statusline should run. On Windows the app is a GUI
+/// program, which PowerShell does not wait for, so the console CLI installed
+/// next to it is preferred when present.
+pub fn hook_exe(exe: &Path) -> std::path::PathBuf {
+    let cli = exe.with_file_name("limitlane-cli.exe");
+    if cfg!(windows) && exe.file_name() != cli.file_name() && cli.is_file() {
+        return cli;
+    }
+    exe.to_path_buf()
+}
+
+/// Point Claude Code's statusline at `exe statusline --limitlane-hook`.
 pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
+    let exe = &hook_exe(exe);
     let settings_path = paths.settings_file();
     let mut root = read_settings(&settings_path)?;
     let existing = root.get("statusLine").cloned();
@@ -137,7 +149,7 @@ pub fn install(paths: &Paths, exe: &Path) -> Result<InstallOutcome> {
             }
         }
         // One-time safety copy of the untouched settings file.
-        let backup = settings_path.with_extension("json.paceline-backup");
+        let backup = settings_path.with_extension("json.limitlane-backup");
         if settings_path.exists() && !backup.exists() {
             std::fs::copy(&settings_path, &backup).ok();
         }
@@ -192,7 +204,7 @@ mod tests {
         Paths { claude_dirs: vec![claude], state_dir: dir.join("state") }
     }
 
-    const MAC_EXE: &str = "/Applications/Paceline.app/Contents/MacOS/paceline";
+    const MAC_EXE: &str = "/Applications/Limitlane.app/Contents/MacOS/limitlane";
 
     /// The command `install` writes for `exe` on the platform running the tests.
     fn hook_cmd(exe: &str) -> String {
@@ -213,7 +225,7 @@ mod tests {
         assert!(!out.wrapped_existing);
         assert_eq!(out.command, hook_cmd(MAC_EXE));
         if cfg!(not(windows)) {
-            assert_eq!(out.command, "'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook");
+            assert_eq!(out.command, "'/Applications/Limitlane.app/Contents/MacOS/limitlane' statusline --limitlane-hook");
         }
         assert_eq!(settings(&p)["statusLine"]["type"], "command");
         assert!(matches!(status(&p), HookStatus::Installed { chained: None, .. }));
@@ -235,9 +247,9 @@ mod tests {
         std::fs::write(p.settings_file(), original).unwrap();
         assert_eq!(status(&p), HookStatus::Other { command: "~/.claude/statusline.sh".into() });
 
-        let out = install(&p, Path::new("/usr/local/bin/paceline")).unwrap();
+        let out = install(&p, Path::new("/usr/local/bin/limitlane")).unwrap();
         assert!(out.wrapped_existing);
-        assert!(out.command.ends_with("--paceline-hook --chain"));
+        assert!(out.command.ends_with("--limitlane-hook --chain"));
         let s = settings(&p);
         assert_eq!(s["statusLine"]["padding"], 2, "other options survive");
         assert_eq!(s["model"], "opus");
@@ -246,14 +258,14 @@ mod tests {
         let text = std::fs::read_to_string(p.settings_file()).unwrap();
         assert!(text.find("\"model\"").unwrap() < text.find("\"statusLine\"").unwrap());
         assert_eq!(chained_command(&p).as_deref(), Some("~/.claude/statusline.sh"));
-        assert_eq!(std::fs::read_to_string(p.settings_file().with_extension("json.paceline-backup")).unwrap(), original);
+        assert_eq!(std::fs::read_to_string(p.settings_file().with_extension("json.limitlane-backup")).unwrap(), original);
 
         // Re-installing (e.g. the app moved) keeps the saved original.
-        let again = install(&p, Path::new("/opt/it's here/paceline")).unwrap();
+        let again = install(&p, Path::new("/opt/it's here/limitlane")).unwrap();
         assert!(again.wrapped_existing);
-        assert_eq!(again.command, format!("{} --chain", hook_cmd("/opt/it's here/paceline")));
+        assert_eq!(again.command, format!("{} --chain", hook_cmd("/opt/it's here/limitlane")));
         if cfg!(not(windows)) {
-            assert_eq!(again.command, r"'/opt/it'\''s here/paceline' statusline --paceline-hook --chain");
+            assert_eq!(again.command, r"'/opt/it'\''s here/limitlane' statusline --limitlane-hook --chain");
         }
         assert_eq!(chained_command(&p).as_deref(), Some("~/.claude/statusline.sh"));
 
@@ -262,6 +274,18 @@ mod tests {
         assert_eq!(s["statusLine"]["command"], "~/.claude/statusline.sh");
         assert_eq!(s["statusLine"]["padding"], 2);
         assert_eq!(status(&p), HookStatus::Other { command: "~/.claude/statusline.sh".into() });
+    }
+
+    #[test]
+    fn hook_from_an_earlier_name_is_recognised_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let old = r#"{"statusLine":{"type":"command","command":"'/Applications/Paceline.app/Contents/MacOS/paceline' statusline --paceline-hook"}}"#;
+        std::fs::write(p.settings_file(), old).unwrap();
+        assert!(matches!(status(&p), HookStatus::Installed { .. }));
+        let out = install(&p, Path::new(MAC_EXE)).unwrap();
+        assert!(!out.wrapped_existing, "our own old hook is not a statusline to chain");
+        assert_eq!(out.command, hook_cmd(MAC_EXE));
     }
 
     #[test]
@@ -281,17 +305,17 @@ mod tests {
     #[test]
     fn windows_paths_work_in_git_bash_and_powershell() {
         let home = r"C:\Users\Ana";
-        assert_eq!(windows_exe(r"C:\Users\Ana\AppData\Local\Paceline\paceline.exe", home), "~/AppData/Local/Paceline/paceline.exe");
+        assert_eq!(windows_exe(r"C:\Users\Ana\AppData\Local\Limitlane\limitlane.exe", home), "~/AppData/Local/Limitlane/limitlane.exe");
         // Drive letters and folder names are case-insensitive.
-        assert_eq!(windows_exe(r"c:\users\ana\AppData\Local\Paceline\paceline.exe", home), "~/AppData/Local/Paceline/paceline.exe");
+        assert_eq!(windows_exe(r"c:\users\ana\AppData\Local\Limitlane\limitlane.exe", home), "~/AppData/Local/Limitlane/limitlane.exe");
         // A user name with a space is hidden behind `~`.
-        assert_eq!(windows_exe(r"C:\Users\Ana Lima\AppData\Local\Paceline\paceline.exe", r"C:\Users\Ana Lima\"), "~/AppData/Local/Paceline/paceline.exe");
+        assert_eq!(windows_exe(r"C:\Users\Ana Lima\AppData\Local\Limitlane\limitlane.exe", r"C:\Users\Ana Lima\"), "~/AppData/Local/Limitlane/limitlane.exe");
         // Outside the home folder: forward slashes, unquoted when possible.
-        assert_eq!(windows_exe(r"D:\tools\paceline.exe", home), "D:/tools/paceline.exe");
-        assert_eq!(windows_exe(r"\\?\D:\tools\paceline.exe", home), "D:/tools/paceline.exe");
-        assert_eq!(windows_exe(r"C:\Program Files\Paceline\paceline.exe", home), r#""C:/Program Files/Paceline/paceline.exe""#);
+        assert_eq!(windows_exe(r"D:\tools\limitlane.exe", home), "D:/tools/limitlane.exe");
+        assert_eq!(windows_exe(r"\\?\D:\tools\limitlane.exe", home), "D:/tools/limitlane.exe");
+        assert_eq!(windows_exe(r"C:\Program Files\Limitlane\limitlane.exe", home), r#""C:/Program Files/Limitlane/limitlane.exe""#);
         // A sibling folder that merely starts with the same name is not home.
-        assert_eq!(windows_exe(r"C:\Users\Anabel\paceline.exe", home), "C:/Users/Anabel/paceline.exe");
+        assert_eq!(windows_exe(r"C:\Users\Anabel\limitlane.exe", home), "C:/Users/Anabel/limitlane.exe");
     }
 
     #[test]

@@ -4,7 +4,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Paceline",
+        "title": "Limitlane",
         "width": 384,
         "height": 640,
         "visible": false,
@@ -18,6 +18,9 @@
       }
     ]
   },
+  "build": {
+    "features": ["cli-exe"]
+  },
   "bundle": {
     "targets": [
       "nsis"
@@ -25,7 +28,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "startMenuFolder": "Paceline"
+        "startMenuFolder": "Limitlane"
       }
     }
   }

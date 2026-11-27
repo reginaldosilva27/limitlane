@@ -128,7 +128,7 @@
     const rep = REPORTS[days] || REPORTS[1];
     return {
       generated_at: NOW,
-      hook: { state: "installed", command: "~/Applications/Paceline.app/Contents/MacOS/paceline statusline --paceline-hook", chained: null },
+      hook: { state: "installed", command: "~/Applications/Limitlane.app/Contents/MacOS/limitlane statusline --limitlane-hook", chained: null },
       limits: { captured_at: NOW - 12 },
       limits_age_secs: 12,
       forecasts: forecasts(fiveHour, sevenDay),
@@ -159,5 +159,5 @@
     };
   }
 
-  window.PacelineDemoData = { NOW, summary };
+  window.LimitlaneDemoData = { NOW, summary };
 })();

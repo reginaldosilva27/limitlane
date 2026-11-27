@@ -1,4 +1,4 @@
-//! Usage engine for Paceline.
+//! Usage engine for Limitlane.
 //!
 //! Two data sources, neither of which touches credentials or the network:
 //!

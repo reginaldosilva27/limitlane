@@ -6,7 +6,7 @@ use std::path::PathBuf;
 pub struct Paths {
     /// Claude Code config directories (usually just `~/.claude`).
     pub claude_dirs: Vec<PathBuf>,
-    /// This tool's own directory (`~/.paceline`).
+    /// This tool's own directory (`~/.limitlane`).
     pub state_dir: PathBuf,
 }
 
@@ -14,18 +14,21 @@ impl Paths {
     /// Resolve from the environment.
     ///
     /// * `CLAUDE_CONFIG_DIR` (comma-separated) overrides the Claude directories.
-    /// * `PACELINE_HOME` overrides this tool's state directory.
+    /// * `LIMITLANE_HOME` overrides this tool's state directory.
     pub fn from_env() -> Self {
         let home = home_dir();
         let claude_dirs = match std::env::var("CLAUDE_CONFIG_DIR") {
             Ok(v) if !v.trim().is_empty() => v.split(',').map(|s| PathBuf::from(s.trim())).collect(),
             _ => vec![home.join(".claude"), home.join(".config").join("claude")],
         };
-        let state_dir = match std::env::var_os("PACELINE_HOME") {
+        let state_dir = match std::env::var_os("LIMITLANE_HOME") {
             Some(v) if !v.is_empty() => PathBuf::from(v),
             _ => {
-                let dir = home.join(".paceline");
-                migrate_legacy_state(&home.join(".claudetokenscounter"), &dir);
+                let dir = home.join(".limitlane");
+                // Earlier names of the project, newest first.
+                for old in [".paceline", ".claudetokenscounter"] {
+                    migrate_legacy_state(&home.join(old), &dir);
+                }
                 dir
             }
         };
@@ -71,8 +74,8 @@ pub fn home_dir() -> PathBuf {
     found.map(PathBuf::from).unwrap_or_default()
 }
 
-/// Carry settings and limit history over from the directory used before the
-/// project was renamed. Does nothing once the new directory exists.
+/// Carry settings and limit history over from a directory used under an
+/// earlier name. Does nothing once the new directory exists.
 pub fn migrate_legacy_state(old: &std::path::Path, new: &std::path::Path) {
     if old.is_dir() && !new.exists() {
         let _ = std::fs::rename(old, new);

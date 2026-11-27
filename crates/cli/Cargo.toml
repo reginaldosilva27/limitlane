@@ -1,6 +1,6 @@
 [package]
-name = "paceline-cli"
-description = "Command-line companion for Paceline"
+name = "limitlane-cli"
+description = "Command-line companion for Limitlane"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,11 @@ license.workspace = true
 path = "src/lib.rs"
 
 [[bin]]
-name = "paceline-cli"
+name = "limitlane-cli"
 path = "src/main.rs"
 
 [dependencies]
-paceline-core = { path = "../core" }
+limitlane-core = { path = "../core" }
 serde.workspace = true
 serde_json.workspace = true
 chrono.workspace = true

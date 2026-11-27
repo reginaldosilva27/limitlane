@@ -293,7 +293,7 @@
       : s.hook.state === "other"
         ? `Another statusline is configured (${s.hook.command}). Enabling keeps it working.`
         : "Adds one entry to ~/.claude/settings.json. A backup is kept next to it.";
-    if (installed && /--ctc-hook/.test(s.hook.command || "")) {
+    if (installed && /--(ctc|paceline)-hook/.test(s.hook.command || "")) {
       detail = "Installed by an older build. Remove it and enable live limits again to keep the numbers updating.";
     } else if (installed && /[\\/]target[\\/](debug|release)[\\/]/.test(s.hook.command || "")) {
       detail += " It points at a development build: open the installed app and enable it again there.";

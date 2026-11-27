@@ -20,4 +20,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The engine and CLI only: the app crate needs a desktop toolchain, and is
       # built by the Release workflow.
-      - run: cargo test -p paceline-core -p paceline-cli
+      - run: cargo test -p limitlane-core -p limitlane-cli

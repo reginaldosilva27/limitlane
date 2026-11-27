@@ -34,19 +34,19 @@ jobs:
         run: |
           cargo tauri build --target universal-apple-darwin
           mkdir -p dist
-          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/Paceline-macos-universal.dmg
+          cp target/universal-apple-darwin/release/bundle/dmg/*.dmg dist/Limitlane-macos-universal.dmg
 
       - name: Install with install.sh and exercise the hook
         env:
           CLAUDE_CONFIG_DIR: ${{ runner.temp }}/claude
-          PACELINE_HOME: ${{ runner.temp }}/paceline
+          LIMITLANE_HOME: ${{ runner.temp }}/limitlane
         run: |
           set -euo pipefail
           apps="$RUNNER_TEMP/Apps"
           # Piped, the way the README runs it.
-          bash -s -- --dmg dist/Paceline-macos-universal.dmg --dir "$apps" --no-launch < install.sh
-          app="$apps/Paceline.app"
-          exe="$app/Contents/MacOS/paceline"
+          bash -s -- --dmg dist/Limitlane-macos-universal.dmg --dir "$apps" --no-launch < install.sh
+          app="$apps/Limitlane.app"
+          exe="$app/Contents/MacOS/limitlane"
           codesign --verify --deep --strict --verbose=2 "$app"
           archs=$(lipo -archs "$exe")
           grep -q x86_64 <<<"$archs" && grep -q arm64 <<<"$archs"
@@ -71,15 +71,15 @@ jobs:
       - name: Start the app (informational)
         continue-on-error: true
         run: |
-          bash -s -- --dmg dist/Paceline-macos-universal.dmg --dir "$RUNNER_TEMP/Apps2" --no-launch < install.sh
-          "$RUNNER_TEMP/Apps2/Paceline.app/Contents/MacOS/paceline" > gui.log 2>&1 &
+          bash -s -- --dmg dist/Limitlane-macos-universal.dmg --dir "$RUNNER_TEMP/Apps2" --no-launch < install.sh
+          "$RUNNER_TEMP/Apps2/Limitlane.app/Contents/MacOS/limitlane" > gui.log 2>&1 &
           sleep 6
           cat gui.log
           kill -0 $! && echo "still running after 6 s"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: paceline-macos
+          name: limitlane-macos
           path: dist/*
           if-no-files-found: error
 
@@ -94,31 +94,32 @@ jobs:
       - name: Build
         shell: pwsh
         run: |
-          cargo tauri build --bundles nsis
+          # cli-exe adds limitlane-cli.exe, the console program the hook runs.
+          cargo tauri build --bundles nsis --features cli-exe
           if ($LASTEXITCODE -ne 0) { throw "build failed" }
           New-Item -ItemType Directory -Force dist | Out-Null
           $setup = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          Copy-Item $setup.FullName dist/Paceline-windows-x64-setup.exe
+          Copy-Item $setup.FullName dist/Limitlane-windows-x64-setup.exe
 
       # Users paste `irm ... | iex` into Windows PowerShell 5.1; test that form there.
       - name: Install through iex in Windows PowerShell 5.1
         shell: powershell
         env:
-          PACELINE_INSTALLER: dist\Paceline-windows-x64-setup.exe
-          PACELINE_NO_LAUNCH: "1"
+          LIMITLANE_INSTALLER: dist\Limitlane-windows-x64-setup.exe
+          LIMITLANE_NO_LAUNCH: "1"
         run: |
           $ErrorActionPreference = 'Stop'
           Get-Content -Raw ./install.ps1 | Invoke-Expression
-          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Paceline\paceline.exe'))) { throw 'paceline.exe was not installed' }
+          if (-not (Test-Path (Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'))) { throw 'limitlane.exe was not installed' }
 
       - name: Start the app (informational)
         shell: pwsh
         continue-on-error: true
         run: |
-          $exe = Join-Path $env:LOCALAPPDATA 'Paceline\paceline.exe'
+          $exe = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'
           Start-Process -FilePath $exe
           Start-Sleep -Seconds 6
-          $p = Get-Process -Name paceline -ErrorAction SilentlyContinue
+          $p = Get-Process -Name limitlane -ErrorAction SilentlyContinue
           if (-not $p) { throw 'the app exited within 6 seconds' }
           Write-Host "still running after 6 s (pid $($p.Id))"
           $p | Stop-Process -Force
@@ -129,12 +130,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $env:CLAUDE_CONFIG_DIR = Join-Path $env:RUNNER_TEMP 'claude'
-          $env:PACELINE_HOME = Join-Path $env:RUNNER_TEMP 'paceline'
+          $env:LIMITLANE_HOME = Join-Path $env:RUNNER_TEMP 'limitlane'
           New-Item -ItemType Directory -Force $env:CLAUDE_CONFIG_DIR | Out-Null
 
-          ./install.ps1 -Installer dist/Paceline-windows-x64-setup.exe -NoLaunch
-          $exe = Join-Path $env:LOCALAPPDATA 'Paceline\paceline.exe'
-          if (-not (Test-Path $exe)) { throw "paceline.exe not found at $exe" }
+          ./install.ps1 -Installer dist/Limitlane-windows-x64-setup.exe -NoLaunch
+          $exe = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane.exe'
+          $cli = Join-Path $env:LOCALAPPDATA 'Limitlane\limitlane-cli.exe'
+          if (-not (Test-Path $exe)) { throw "limitlane.exe not found at $exe" }
+          if (-not (Test-Path $cli)) { throw "limitlane-cli.exe not found at $cli" }
 
           # Start a process the way Claude Code does: pipes for stdin and stdout.
           function Run([string]$File, [string[]]$Argv, [string]$Stdin = '') {
@@ -165,7 +168,8 @@ jobs:
           [void](Run $exe @('hook', 'install'))
           $cmd = StatusCommand
           Write-Host "statusLine command: $cmd"
-          if ($cmd -ne '~/AppData/Local/Paceline/paceline.exe statusline --paceline-hook') { throw "unexpected command: $cmd" }
+          # Installed from the app binary, the hook still points at the console CLI.
+          if ($cmd -ne '~/AppData/Local/Limitlane/limitlane-cli.exe statusline --limitlane-hook') { throw "unexpected command: $cmd" }
 
           # Claude Code uses Git Bash when it is installed and PowerShell otherwise.
           # The marker after the hook proves the shell waited for it: the app is
@@ -189,11 +193,11 @@ jobs:
           if ((StatusCommand) -ne 'echo my-own-statusline') { throw 'uninstall did not restore the original statusline' }
 
           ./install.ps1 -Uninstall
-          if (Test-Path $exe) { throw 'uninstall left paceline.exe behind' }
+          if ((Test-Path $exe) -or (Test-Path $cli)) { throw 'uninstall left files behind' }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: paceline-windows
+          name: limitlane-windows
           path: dist/*
           if-no-files-found: error
 

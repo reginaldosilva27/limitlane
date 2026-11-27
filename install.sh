@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Paceline installer for macOS.
+# Limitlane installer for macOS.
 #
-#   curl -fsSL https://raw.githubusercontent.com/reginaldosilva27/paceline/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/reginaldosilva27/limitlane/main/install.sh | bash
 #
 # Options (when piping, pass them after `bash -s --`):
 #   --uninstall   remove the app, its login item and the Claude Code hook
@@ -15,9 +15,9 @@
 
 set -euo pipefail
 
-REPO="reginaldosilva27/paceline"
-DMG_URL="https://github.com/$REPO/releases/latest/download/Paceline-macos-universal.dmg"
-APP="Paceline.app"
+REPO="reginaldosilva27/limitlane"
+DMG_URL="https://github.com/$REPO/releases/latest/download/Limitlane-macos-universal.dmg"
+APP="Limitlane.app"
 
 say() { printf '\033[1m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[31mError:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -41,13 +41,13 @@ done
   irm https://raw.githubusercontent.com/$REPO/main/install.ps1 | iex"
 
 major="$(sw_vers -productVersion | cut -d. -f1)"
-[ "$major" -ge 11 ] || die "Paceline needs macOS 11 or later (this Mac runs $(sw_vers -productVersion))."
+[ "$major" -ge 11 ] || die "Limitlane needs macOS 11 or later (this Mac runs $(sw_vers -productVersion))."
 
 quit_running_app() {
-  if pgrep -xq paceline; then
-    say "Quitting the running Paceline"
-    pkill -x paceline || true
-    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -xq paceline || break; sleep 0.3; done
+  if pgrep -xq limitlane; then
+    say "Quitting the running Limitlane"
+    pkill -x limitlane || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -xq limitlane || break; sleep 0.3; done
   fi
 }
 
@@ -56,21 +56,21 @@ if [ "$uninstall" = 1 ]; then
   found=0
   # With --dir, touch only that folder.
   if [ -n "$dest_dir" ]; then dirs=("$dest_dir"); else dirs=(/Applications "$HOME/Applications"); fi
-  login_item="$HOME/Library/LaunchAgents/Paceline.plist"
+  login_item="$HOME/Library/LaunchAgents/Limitlane.plist"
   for dir in "${dirs[@]}"; do
     app="$dir/$APP"
     [ -d "$app" ] || continue
     found=1
     say "Removing the Claude Code statusline hook (your previous statusline is restored)"
-    "$app/Contents/MacOS/paceline" hook uninstall || true
+    "$app/Contents/MacOS/limitlane" hook uninstall || true
     quit_running_app
     # The login item, only when it opens this copy of the app.
     if [ -f "$login_item" ] && grep -qF "$app/" "$login_item"; then rm -f "$login_item"; fi
     say "Deleting $app"
     rm -rf "$app"
   done
-  [ "$found" = 1 ] || say "Paceline.app was not found; nothing to remove."
-  say "Done. Settings and limit history stay in ~/.paceline; delete that folder to remove them too."
+  [ "$found" = 1 ] || say "Limitlane.app was not found; nothing to remove."
+  say "Done. Settings and limit history stay in ~/.limitlane; delete that folder to remove them too."
   exit 0
 fi
 
@@ -89,8 +89,8 @@ cleanup() {
 trap cleanup EXIT
 
 if [ -z "$dmg" ]; then
-  say "Downloading the latest Paceline release"
-  dmg="$tmp/Paceline.dmg"
+  say "Downloading the latest Limitlane release"
+  dmg="$tmp/Limitlane.dmg"
   curl -fL --progress-bar -o "$dmg" "$DMG_URL" || die "download failed ($DMG_URL).
 If no release has been published yet, build from source instead:
   https://github.com/$REPO#build-from-source"
@@ -107,24 +107,24 @@ rm -rf "${dest_dir:?}/$APP"
 ditto "$mnt/$APP" "$dest_dir/$APP"
 /usr/bin/xattr -dr com.apple.quarantine "$dest_dir/$APP" 2>/dev/null || true
 
-exe="$dest_dir/$APP/Contents/MacOS/paceline"
+exe="$dest_dir/$APP/Contents/MacOS/limitlane"
 "$exe" --version >/dev/null || die "the installed app does not run on this Mac"
 
 if [ "$launch" = 1 ]; then
-  say "Opening Paceline"
+  say "Opening Limitlane"
   open "$dest_dir/$APP"
 fi
 
 cat <<EOF
 
-Paceline $("$exe" --version | awk '{print $2}') is installed.
+Limitlane $("$exe" --version | awk '{print $2}') is installed.
 
 Next:
-  1. Click the Paceline item in the menu bar and choose "Enable live limits".
+  1. Click the Limitlane item in the menu bar and choose "Enable live limits".
      (Or from a terminal: "$exe" hook install)
   2. Send any message in Claude Code. The percentages appear within seconds.
   3. Optional: Settings > Open at login.
 
-Terminal commands:  alias paceline="$exe"   then   paceline status
+Terminal commands:  alias limitlane="$exe"   then   limitlane status
 Uninstall:          curl -fsSL https://raw.githubusercontent.com/$REPO/main/install.sh | bash -s -- --uninstall
 EOF

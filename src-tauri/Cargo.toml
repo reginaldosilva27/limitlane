@@ -1,10 +1,22 @@
 [package]
-name = "paceline"
+name = "limitlane"
 description = "Claude usage limits, forecast and cost per project in the macOS menu bar and the Windows notification area"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
+default-run = "limitlane"
+
+[features]
+# Builds the console CLI below. The Windows installer ships it, because the
+# app is a GUI program and PowerShell does not wait for those to finish, which
+# the statusline hook needs.
+cli-exe = []
+
+[[bin]]
+name = "limitlane-cli"
+path = "src/cli.rs"
+required-features = ["cli-exe"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -13,8 +25,8 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
-paceline-core = { path = "../crates/core" }
-paceline-cli = { path = "../crates/cli" }
+limitlane-core = { path = "../crates/core" }
+limitlane-cli = { path = "../crates/cli" }
 serde.workspace = true
 serde_json.workspace = true
 

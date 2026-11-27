@@ -1,6 +1,6 @@
 [package]
-name = "paceline-core"
-description = "Usage engine for Paceline: transcript parsing, pricing, limits, forecast"
+name = "limitlane-core"
+description = "Usage engine for Limitlane: transcript parsing, pricing, limits, forecast"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

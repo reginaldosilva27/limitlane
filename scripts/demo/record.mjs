@@ -1,6 +1,8 @@
-// Records docs/demo.gif from stage.html, frame by frame.
+// Records docs/demo.gif from stage.html, frame by frame, or renders
+// docs/screenshot.png from screenshot.html.
 //
-//   cd scripts/demo && npm install && node record.mjs
+//   cd scripts/demo && npm install && node record.mjs            # GIF
+//   node record.mjs screenshot                                    # PNG
 //
 // Needs Chrome or Chromium (set CHROME_PATH, or have Playwright's browser
 // cache or Google Chrome installed) and gifski (`brew install gifski`).
@@ -44,8 +46,27 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
-const frames = mkdtempSync(join(tmpdir(), "paceline-demo-"));
 const browser = await chromium.launch({ executablePath: findChrome() });
+
+if (process.argv[2] === "screenshot") {
+  try {
+    const context = await browser.newContext({ viewport: { width: 1332, height: 730 }, deviceScaleFactor: 2, colorScheme: "light", reducedMotion: "reduce", locale: "en-US", timezoneId: "America/Sao_Paulo" });
+    await context.clock.setFixedTime(new Date("2026-11-27T09:12:00-03:00"));
+    const page = await context.newPage();
+    page.on("pageerror", (e) => console.error("page error:", e.message));
+    await page.goto(`${base}/scripts/demo/screenshot.html`);
+    await page.evaluate(() => window.shotReady);
+    const out = join(ROOT, "docs/screenshot.png");
+    await page.locator("#shot").screenshot({ path: out });
+    console.log(`wrote ${out}`);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  process.exit(0);
+}
+
+const frames = mkdtempSync(join(tmpdir(), "limitlane-demo-"));
 try {
   const context = await browser.newContext({
     viewport: { width: WIDTH, height: HEIGHT },

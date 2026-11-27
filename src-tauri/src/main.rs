@@ -4,11 +4,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use paceline_core::alerts::{self, AlertState};
-use paceline_core::config::Config;
-use paceline_core::hook::{self, HookStatus, InstallOutcome};
-use paceline_core::placement::{self, Screen};
-use paceline_core::{icon, Engine, Paths, Summary};
+use limitlane_core::alerts::{self, AlertState};
+use limitlane_core::config::Config;
+use limitlane_core::hook::{self, HookStatus, InstallOutcome};
+use limitlane_core::placement::{self, Screen};
+use limitlane_core::{icon, Engine, Paths, Summary};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -38,7 +38,7 @@ struct AppState {
 fn compute(state: &AppState) -> Summary {
     let days = state.range_days.load(Ordering::Relaxed).max(1);
     let mut engine = state.engine.lock().unwrap_or_else(|e| e.into_inner());
-    engine.summary(days, paceline_core::now(), paceline_core::local_offset())
+    engine.summary(days, limitlane_core::now(), limitlane_core::local_offset())
 }
 
 fn err_string(e: impl std::fmt::Display) -> String {
@@ -141,17 +141,17 @@ fn tray_image(five_hour: Option<f64>, seven_day: Option<f64>) -> Image<'static> 
 
 fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else {
-        eprintln!("[paceline] menu bar item not found");
+        eprintln!("[limitlane] menu bar item not found");
         return;
     };
     if let Err(e) = tray.set_icon(Some(tray_image(summary.five_hour_pct(), summary.seven_day_pct()))) {
-        eprintln!("[paceline] could not set the menu bar icon: {e}");
+        eprintln!("[limitlane] could not set the menu bar icon: {e}");
     }
     if cfg!(target_os = "macos") {
         let _ = tray.set_icon_as_template(true);
         let title = summary.menu_bar_title(config.menu_bar);
         if let Err(e) = tray.set_title(if title.is_empty() { None } else { Some(title) }) {
-            eprintln!("[paceline] could not set the menu bar title: {e}");
+            eprintln!("[limitlane] could not set the menu bar title: {e}");
         }
     }
 
@@ -160,7 +160,7 @@ fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
         None => format!("{label}: no data"),
     };
     // On Windows the tooltip is the only place the numbers appear as text.
-    let tip = format!("Paceline\n{}\n{}", line("5-hour", summary.five_hour_pct()), line("Weekly", summary.seven_day_pct()));
+    let tip = format!("Limitlane\n{}\n{}", line("5-hour", summary.five_hour_pct()), line("Weekly", summary.seven_day_pct()));
     let _ = tray.set_tooltip(Some(tip));
 }
 
@@ -203,7 +203,7 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
         (p, PhysicalPosition::new(p.x.round() as i32, p.y.round() as i32).into())
     };
     if cfg!(debug_assertions) {
-        eprintln!("[paceline] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
+        eprintln!("[limitlane] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
     }
 
     // Follow the user to whichever Space is active, including full-screen apps.
@@ -235,7 +235,7 @@ fn refresh(app: &AppHandle) {
     let summary = compute(&state);
     update_tray(app, &summary, &config);
     if cfg!(debug_assertions) {
-        eprintln!("[paceline] refresh in {:?}: title {:?}, {} responses in range", started.elapsed(), summary.menu_bar_title(config.menu_bar), summary.report.totals.messages);
+        eprintln!("[limitlane] refresh in {:?}: title {:?}, {} responses in range", started.elapsed(), summary.menu_bar_title(config.menu_bar), summary.report.totals.messages);
     }
 
     let fired = {
@@ -270,7 +270,7 @@ fn spawn_refresh_loop(app: AppHandle) {
     });
 }
 
-/// The Windows build is a GUI program, so typing `paceline status` in a
+/// The Windows build is a GUI program, so typing `limitlane status` in a
 /// terminal would print nothing. Borrow the terminal's console in that case.
 /// When Claude Code runs the hook it passes pipes, which are left alone.
 #[cfg(windows)]
@@ -290,7 +290,7 @@ fn main() {
     if !args.is_empty() {
         #[cfg(windows)]
         attach_parent_console();
-        std::process::exit(paceline_cli::run(args));
+        std::process::exit(limitlane_cli::run(args));
     }
 
     let paths = Paths::from_env();
@@ -315,15 +315,15 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
             let refresh_item = MenuItem::with_id(app, "refresh", "Refresh now", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "quit", "Quit Paceline", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit Limitlane", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open, &refresh_item, &quit_item])?;
 
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(tray_image(None, None))
                 .icon_as_template(cfg!(target_os = "macos"))
                 // Placeholder until the first refresh, so the item is easy to spot.
-                .title("Paceline")
-                .tooltip("Paceline")
+                .title("Limitlane")
+                .tooltip("Limitlane")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -340,7 +340,7 @@ fn main() {
                     }
                 })
                 .build(app)?;
-            eprintln!("[paceline] menu bar item created");
+            eprintln!("[limitlane] menu bar item created");
 
             if let Some(window) = app.get_webview_window(WINDOW) {
                 let handle = app.handle().clone();
@@ -360,5 +360,5 @@ fn main() {
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("failed to start Paceline");
+        .expect("failed to start Limitlane");
 }

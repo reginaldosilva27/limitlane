@@ -1,5 +1,5 @@
 {
-  "name": "paceline-demo",
+  "name": "limitlane-demo",
   "private": true,
   "description": "Records docs/demo.gif from the real popover UI with generated demo data.",
   "type": "module",
