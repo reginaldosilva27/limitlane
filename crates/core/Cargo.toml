@@ -1,0 +1,15 @@
+[package]
+name = "ctc-core"
+description = "Usage engine for Claude Tokens Counter: transcript parsing, pricing, limits, forecast"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

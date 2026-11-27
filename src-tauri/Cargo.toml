@@ -1,0 +1,18 @@
+[package]
+name = "claude-tokens-counter"
+description = "Claude usage limits, forecast and cost per project in the macOS menu bar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+ctc-core = { path = "../crates/core" }
+ctc-cli = { path = "../crates/cli" }
+serde.workspace = true
+serde_json.workspace = true
