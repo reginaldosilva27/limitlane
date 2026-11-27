@@ -15,6 +15,7 @@ use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt;
 
 const TRAY_ID: &str = "main";
@@ -84,6 +85,30 @@ fn hook_status(state: tauri::State<AppState>) -> HookStatus {
     hook::status(&state.paths)
 }
 
+#[derive(serde::Serialize)]
+struct AppInfo {
+    version: &'static str,
+    /// True for `cargo tauri dev` builds, which should not register
+    /// themselves at login or be the long-term statusline hook.
+    dev_build: bool,
+    launch_at_login: bool,
+}
+
+#[tauri::command]
+fn app_info(app: AppHandle) -> AppInfo {
+    AppInfo { version: env!("CARGO_PKG_VERSION"), dev_build: cfg!(debug_assertions), launch_at_login: app.autolaunch().is_enabled().unwrap_or(false) }
+}
+
+#[tauri::command]
+fn set_launch_at_login(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    if enabled && cfg!(debug_assertions) {
+        return Err("This is a development build. Install the app in /Applications and turn this on there.".into());
+    }
+    let auto = app.autolaunch();
+    if enabled { auto.enable() } else { auto.disable() }.map_err(err_string)?;
+    auto.is_enabled().map_err(err_string)
+}
+
 #[tauri::command]
 fn hide_window(window: WebviewWindow) {
     let _ = window.hide();
@@ -97,12 +122,19 @@ fn quit(app: AppHandle) {
 // ---------- tray ----------
 
 fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        eprintln!("[ctc] menu bar item not found");
+        return;
+    };
     let pixels = icon::render_meter(summary.five_hour_pct(), summary.seven_day_pct());
-    let _ = tray.set_icon(Some(Image::new_owned(pixels, icon::WIDTH, icon::HEIGHT)));
+    if let Err(e) = tray.set_icon(Some(Image::new_owned(pixels, icon::WIDTH, icon::HEIGHT))) {
+        eprintln!("[ctc] could not set the menu bar icon: {e}");
+    }
     let _ = tray.set_icon_as_template(true);
     let title = summary.menu_bar_title(config.menu_bar);
-    let _ = tray.set_title(if title.is_empty() { None } else { Some(title) });
+    if let Err(e) = tray.set_title(if title.is_empty() { None } else { Some(title) }) {
+        eprintln!("[ctc] could not set the menu bar title: {e}");
+    }
 
     let line = |label: &str, v: Option<f64>| match v {
         Some(p) => format!("{label}: {p:.0}%"),
@@ -137,6 +169,9 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
         }
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
+    // Follow the user to whichever Space is active, including full-screen apps.
+    let _ = window.set_visible_on_all_workspaces(true);
+    let _ = window.set_always_on_top(true);
     let _ = window.show();
     let _ = window.set_focus();
     state.refresh_now.store(true, Ordering::Relaxed);
@@ -155,8 +190,12 @@ fn show_centered(app: &AppHandle) {
 fn refresh(app: &AppHandle) {
     let state = app.state::<AppState>();
     let config = Config::load(&state.paths);
+    let started = Instant::now();
     let summary = compute(&state);
     update_tray(app, &summary, &config);
+    if cfg!(debug_assertions) {
+        eprintln!("[ctc] refresh in {:?}: title {:?}, {} responses in range", started.elapsed(), summary.menu_bar_title(config.menu_bar), summary.report.totals.messages);
+    }
 
     let fired = {
         let mut st = state.alerts.lock().unwrap_or_else(|e| e.into_inner());
@@ -209,8 +248,9 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(state)
-        .invoke_handler(tauri::generate_handler![get_summary, get_config, set_config, hook_install, hook_uninstall, hook_status, hide_window, quit])
+        .invoke_handler(tauri::generate_handler![get_summary, get_config, set_config, hook_install, hook_uninstall, hook_status, app_info, set_launch_at_login, hide_window, quit])
         .setup(|app| {
             // Menu bar only: no Dock icon, no app switcher entry.
             #[cfg(target_os = "macos")]
@@ -224,6 +264,8 @@ fn main() {
             TrayIconBuilder::with_id(TRAY_ID)
                 .icon(Image::new_owned(icon::render_meter(None, None), icon::WIDTH, icon::HEIGHT))
                 .icon_as_template(true)
+                // Placeholder until the first refresh, so the item is easy to spot.
+                .title("Claude …")
                 .tooltip("Claude Tokens Counter")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
@@ -241,6 +283,7 @@ fn main() {
                     }
                 })
                 .build(app)?;
+            eprintln!("[ctc] menu bar item created");
 
             if let Some(window) = app.get_webview_window(WINDOW) {
                 let handle = app.handle().clone();

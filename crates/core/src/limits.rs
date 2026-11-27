@@ -7,6 +7,7 @@
 
 use crate::paths::{write_atomic, Paths};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::io::Write;
 
 // ---------- statusline input (only the fields we use) ----------
@@ -75,6 +76,10 @@ pub struct InRateLimits {
     pub seven_day: Option<Window>,
     #[serde(default)]
     pub spend_limit: Option<Spend>,
+    /// Any other window Claude Code reports (for example a per-model weekly
+    /// limit). Kept generically so new windows show up without a release.
+    #[serde(flatten)]
+    pub other: BTreeMap<String, serde_json::Value>,
 }
 
 // ---------- stored state ----------
@@ -110,6 +115,9 @@ pub struct LimitsSnapshot {
     pub seven_day: Option<Window>,
     #[serde(default)]
     pub spend_limit: Option<Spend>,
+    /// Windows other than the two standard ones, keyed by Claude Code's name.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, Window>,
     #[serde(default)]
     pub claude_code_version: Option<String>,
     /// When the last history sample was appended (hook bookkeeping).
@@ -119,7 +127,7 @@ pub struct LimitsSnapshot {
 
 impl LimitsSnapshot {
     pub fn is_empty(&self) -> bool {
-        self.five_hour.is_none() && self.seven_day.is_none() && self.spend_limit.is_none()
+        self.five_hour.is_none() && self.seven_day.is_none() && self.spend_limit.is_none() && self.extra.is_empty()
     }
 }
 
@@ -221,8 +229,17 @@ pub fn record(paths: &Paths, input: &StatuslineInput, now: i64) -> std::io::Resu
     // --- account-wide limits ---
     let Some(rl) = input.rate_limits.as_ref() else { return Ok(()) };
     let prev: LimitsSnapshot = read_json(&paths.limits_file()).unwrap_or_default();
+    let mut extra: BTreeMap<String, Window> = prev.extra.iter().filter(|(_, w)| w.resets_at > now).map(|(k, w)| (k.clone(), *w)).collect();
+    for (key, value) in &rl.other {
+        if let Ok(w) = serde_json::from_value::<Window>(value.clone()) {
+            if let Some(merged) = merge_window(extra.get(key).copied(), Some(w), now) {
+                extra.insert(key.clone(), merged);
+            }
+        }
+    }
     let mut next = LimitsSnapshot {
         captured_at: now,
+        extra,
         five_hour: merge_window(prev.five_hour, rl.five_hour, now),
         seven_day: merge_window(prev.seven_day, rl.seven_day, now),
         spend_limit: rl.spend_limit.clone().or(prev.spend_limit.clone()).filter(|s| s.resets_at > now),
@@ -272,6 +289,7 @@ pub fn load_limits(paths: &Paths, now: i64) -> Option<LimitsSnapshot> {
     snap.five_hour = snap.five_hour.filter(|w| w.resets_at > now);
     snap.seven_day = snap.seven_day.filter(|w| w.resets_at > now);
     snap.spend_limit = snap.spend_limit.filter(|s| s.resets_at > now);
+    snap.extra.retain(|_, w| w.resets_at > now);
     (!snap.is_empty()).then_some(snap)
 }
 
@@ -374,6 +392,24 @@ mod tests {
         let l = load_limits(&p, 20_501).unwrap();
         assert_eq!(l.five_hour, Some(Window { used_percentage: 2.0, resets_at: 38_000 }));
         assert_eq!(l.seven_day.unwrap().used_percentage, 45.0, "window absent from input is kept");
+    }
+
+    #[test]
+    fn unknown_windows_are_captured() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = paths(dir.path());
+        let json = r#"{"rate_limits":{"five_hour":{"used_percentage":5,"resets_at":20000},
+            "seven_day_fable":{"used_percentage":61.5,"resets_at":500000},
+            "something_else":{"enabled":true}}}"#;
+        record(&p, &input(json), 10_000).unwrap();
+        let l = load_limits(&p, 10_001).unwrap();
+        assert_eq!(l.extra.len(), 1);
+        assert_eq!(l.extra["seven_day_fable"], Window { used_percentage: 61.5, resets_at: 500_000 });
+        // A later report without it keeps it until it expires.
+        record(&p, &input(r#"{"rate_limits":{"five_hour":{"used_percentage":6,"resets_at":20000}}}"#), 10_100).unwrap();
+        assert_eq!(load_limits(&p, 10_101).unwrap().extra.len(), 1);
+        assert!(load_limits(&p, 15_000).unwrap().extra.len() == 1);
+        assert!(load_limits(&p, 600_000).is_none());
     }
 
     #[test]

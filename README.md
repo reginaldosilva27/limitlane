@@ -4,16 +4,26 @@ A macOS menu bar app that shows how much of your Claude limits you have used, **
 
 It reads only local files. No API keys, no OAuth token, no cookies, no network calls.
 
-> Unofficial project, not affiliated with Anthropic. Status: v0.1, the engine and CLI are tested; the macOS app shell has been compile-checked on Linux but not yet run on a Mac (see [Status](#status)).
+![Claude Tokens Counter popover in light and dark mode](docs/screenshot.png)
+
+*Screenshot uses generated demo data.*
+
+> Unofficial project, not affiliated with Anthropic. Status: v0.1, early but in daily use on macOS (see [Status](#status)).
 
 ## What it shows
 
 - **5-hour and weekly limits** as reported by Claude Code itself, with reset countdown and a pace mark on each bar.
 - **Burn-rate forecast**: "At this pace: limit at 14:55, 45m before reset", or "68% at reset" when you are safe. The pace decays while you are idle.
+- **Model mix for the week**: how much of the current weekly window went to Fable, Opus, Sonnet or Haiku.
 - **Per-project breakdown**: tokens and API-equivalent cost by project, model, session and day, for today, 7 days or 30 days.
 - **Context window meter** for every active Claude Code session.
 - **Alerts** at 50 / 75 / 90% (configurable), plus one warning per window when the forecast says you will run out before the reset.
 - **CLI and export**: the same numbers as tables, JSON or CSV.
+- **Open at login**, light and dark mode, works over full-screen apps.
+
+### About per-model limits
+
+Claude Code's statusline reports one 5-hour and one weekly percentage for the account. It does not report a separate limit per model, so this app cannot show a "Fable limit" percentage. What it shows instead is the model mix: each model family's share of this week's usage, measured in API-equivalent cost. If Claude Code starts reporting more windows, they appear in the panel automatically.
 
 ## How it gets the data
 
@@ -39,7 +49,9 @@ cargo tauri dev      # run in development
 cargo tauri build    # produces target/release/bundle/macos/Claude Tokens Counter.app
 ```
 
-Move the `.app` to `/Applications` **before** enabling live limits, because the hook stores the app's path. If you move it later, open Settings and enable again.
+Move the `.app` to `/Applications` **before** enabling live limits, because the hook stores the app's path. If you move it later, open Settings and enable again. Turn on **Open at login** in Settings to have it start with your Mac.
+
+To keep it in the always-visible part of the menu bar, hold Command and drag the item where you want it.
 
 Then click the menu bar icon and choose **Enable live limits**, or from a terminal:
 
@@ -121,19 +133,14 @@ Based on each project's README in November 2026; check them for the current stat
 
 ## Status
 
-Verified on Linux: 44 unit tests, an end-to-end run of the CLI and hook against generated transcripts, totals cross-checked with an independent script, and the popover rendered in a headless browser with real engine output.
-
-Not yet verified, needs a Mac:
-
-- Tray icon rendering and title in the real menu bar, popover position under the icon, hide on blur.
-- `ActivationPolicy::Accessory` (no Dock icon). This line is macOS-only and was not compiled on Linux.
-- Notifications. In `cargo tauri dev` macOS attributes them to the terminal; use a built `.app` to test.
-- Field names in real transcripts and statusline payloads were taken from the Claude Code documentation and other tools, then tested against synthetic data, not against a live Claude Code session.
+- Engine and CLI: 47 unit tests, plus an end-to-end run against generated transcripts with totals cross-checked by an independent script.
+- macOS app: menu bar item, popover and live limits confirmed working on Apple Silicon.
+- Still lightly tested: notifications, open at login, the rounded transparent window, and wrapping an existing statusline on a real setup. Please open an issue if one misbehaves.
+- Builds are not signed or notarized yet, so install from source for now.
 
 ## Roadmap
 
-- Launch at login, signed and notarized builds, Homebrew cask.
-- Rounded, translucent popover (needs `macOSPrivateApi`).
+- Signed and notarized builds, Homebrew cask.
 - File watching instead of polling.
 - Opt-in OAuth usage endpoint for people who want limits without a running Claude Code session.
 - Per-project budget alerts; Codex and Gemini providers.

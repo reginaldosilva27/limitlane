@@ -288,6 +288,13 @@ pub fn render_status(s: &Summary, offset: chrono::FixedOffset) -> String {
         let _ = writeln!(t, "{:<7} {} {:>5.1}%   resets in {} ({})", f.window.label(), bar(f.used_pct, 20), f.used_pct, fmt_duration(f.seconds_to_reset), clock(f.resets_at, offset));
         let _ = writeln!(t, "        {}", forecast_line(f, now, offset));
     }
+    for w in &s.extra_windows {
+        let _ = writeln!(t, "{:<16} {} {:>5.1}%   resets in {}", w.label, bar(w.used_pct, 20), w.used_pct, fmt_duration(w.resets_at - now));
+    }
+    if !s.week_models.is_empty() {
+        let parts: Vec<String> = s.week_models.iter().map(|m| format!("{} {:.0}%", m.family, m.share_pct)).collect();
+        let _ = writeln!(t, "        this week by model (share of API-equivalent cost): {}", parts.join(" · "));
+    }
     if let Some(age) = s.limits_age_secs.filter(|a| *a > 900) {
         let _ = writeln!(t, "        (last reported by Claude Code {} ago)", fmt_duration(age));
     }

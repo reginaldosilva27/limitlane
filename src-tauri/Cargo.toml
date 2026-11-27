@@ -10,7 +10,8 @@ authors.workspace = true
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-autostart = "2"
 tauri-plugin-notification = "2"
 ctc-core = { path = "../crates/core" }
 ctc-cli = { path = "../crates/cli" }

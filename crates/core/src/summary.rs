@@ -1,6 +1,6 @@
 //! The single document the menu bar app and the CLI render.
 
-use crate::aggregate::{self, BlockEstimate, Burn, Report, Totals};
+use crate::aggregate::{self, BlockEstimate, Burn, FamilyShare, Report, Totals};
 use crate::config::{Config, MenuBarStyle};
 use crate::forecast::{forecast, Forecast, WindowKind};
 use crate::hook::{self, HookStatus};
@@ -29,6 +29,39 @@ pub struct SessionView {
     pub source: &'static str,
 }
 
+/// A limit window beyond the standard two, as reported by Claude Code.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExtraWindow {
+    pub key: String,
+    pub label: String,
+    pub used_pct: f64,
+    pub resets_at: i64,
+}
+
+/// `seven_day_fable` becomes `Weekly · Fable`.
+pub fn window_label(key: &str) -> String {
+    let (prefix, rest) = if let Some(r) = key.strip_prefix("seven_day") {
+        ("Weekly", r)
+    } else if let Some(r) = key.strip_prefix("five_hour") {
+        ("5-hour", r)
+    } else {
+        ("", key)
+    };
+    let words: Vec<String> = rest
+        .split('_')
+        .filter(|w| !w.is_empty())
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+        })
+        .collect();
+    match (prefix.is_empty(), words.is_empty()) {
+        (true, _) => words.join(" "),
+        (false, true) => prefix.to_string(),
+        (false, false) => format!("{prefix} · {}", words.join(" ")),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Summary {
     pub generated_at: i64,
@@ -38,6 +71,13 @@ pub struct Summary {
     /// Seconds since Claude Code last reported limits.
     pub limits_age_secs: Option<i64>,
     pub forecasts: Vec<Forecast>,
+    /// Other windows Claude Code reported, such as a per-model weekly limit.
+    pub extra_windows: Vec<ExtraWindow>,
+    /// Start of the period `week_models` covers: the current weekly window
+    /// when known, otherwise the last seven days.
+    pub week_since: i64,
+    /// Usage per model family in that period.
+    pub week_models: Vec<FamilyShare>,
     pub burn: Burn,
     /// Heuristic 5-hour window, only filled when `limits` has no 5-hour data.
     pub block_estimate: Option<BlockEstimate>,
@@ -126,6 +166,13 @@ impl Engine {
         let has_five_hour = limits.as_ref().is_some_and(|l| l.five_hour.is_some());
         let block_estimate = if has_five_hour { None } else { aggregate::estimate_block(&entries, &pricing, now) };
 
+        let extra_windows = limits
+            .as_ref()
+            .map(|l| l.extra.iter().map(|(k, w)| ExtraWindow { key: k.clone(), label: window_label(k), used_pct: w.used_percentage, resets_at: w.resets_at }).collect())
+            .unwrap_or_default();
+        let week_since = limits.as_ref().and_then(|l| l.seven_day).map(|w| w.resets_at - aggregate::SEVEN_DAYS).unwrap_or(now - aggregate::SEVEN_DAYS);
+        let week_models = aggregate::family_shares(&entries, &pricing, week_since, now);
+
         let today = aggregate::build_report(&entries, &pricing, now, 1, offset).totals;
         let report = aggregate::build_report(&entries, &pricing, now, range_days, offset);
 
@@ -135,6 +182,9 @@ impl Engine {
             limits_age_secs: limits.as_ref().map(|l| now - l.captured_at),
             limits,
             forecasts,
+            extra_windows,
+            week_since,
+            week_models,
             burn: aggregate::burn(&entries, &pricing, now, 30),
             block_estimate,
             today,
@@ -248,6 +298,9 @@ mod tests {
 
         let s = engine.summary(1, now, offset);
         assert_eq!(s.five_hour_pct(), Some(42.4));
+        assert_eq!(s.week_since, now + 300_000 - aggregate::SEVEN_DAYS);
+        assert_eq!(s.week_models.iter().map(|m| m.family.as_str()).collect::<Vec<_>>(), ["Opus", "Sonnet"]);
+        assert!(s.extra_windows.is_empty());
         assert_eq!(s.forecasts.len(), 2);
         assert_eq!(s.limits_age_secs, Some(30));
         assert!(s.block_estimate.is_none());
@@ -263,6 +316,14 @@ mod tests {
         assert_eq!(json["forecasts"][0]["window"], "five_hour");
         assert_eq!(json["hook"]["state"], "not_installed");
         let _ = ts("2026-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn window_labels() {
+        assert_eq!(window_label("seven_day_fable"), "Weekly · Fable");
+        assert_eq!(window_label("five_hour_opus"), "5-hour · Opus");
+        assert_eq!(window_label("seven_day"), "Weekly");
+        assert_eq!(window_label("monthly_credits"), "Monthly Credits");
     }
 
     #[test]

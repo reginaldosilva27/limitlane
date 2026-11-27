@@ -8,31 +8,34 @@
 </head>
 <body>
   <main id="app">
-    <header>
+    <header class="top">
+      <svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><rect x="2" y="4" width="16" height="5" rx="2.5" opacity=".28"/><rect x="2" y="4" width="11" height="5" rx="2.5"/><rect x="2" y="11" width="16" height="5" rx="2.5" opacity=".28"/><rect x="2" y="11" width="6" height="5" rx="2.5"/></svg>
       <h1>Claude usage</h1>
-      <span id="updated" class="muted"></span>
-      <button id="refresh" class="icon-btn" title="Refresh" aria-label="Refresh">↻</button>
-      <button id="open-settings" class="icon-btn" title="Settings" aria-label="Settings">⚙</button>
+      <span id="live" class="live"></span>
+      <button id="refresh" class="icon-btn" title="Refresh" aria-label="Refresh">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 8a5.2 5.2 0 1 1-1.6-3.75" /><path d="M13.4 2.6v3h-3" /></svg>
+      </button>
+      <button id="open-settings" class="icon-btn" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h6M11.5 4.5h2M2.5 11.5h2M7.5 11.5h6" /><circle cx="10" cy="4.5" r="1.6" /><circle cx="6" cy="11.5" r="1.6" /></svg>
+      </button>
     </header>
 
-    <section id="limits" aria-label="Usage limits"></section>
+    <section id="limits" class="panel" aria-label="Usage limits"></section>
 
-    <section id="burn" class="strip" aria-label="Burn rate"></section>
+    <section id="stats" class="stats" aria-label="Pace and cost"></section>
 
-    <section class="range">
-      <div class="segmented" id="range" role="tablist" aria-label="Period">
-        <button data-days="1" class="on">Today</button>
-        <button data-days="7">7 days</button>
-        <button data-days="30">30 days</button>
+    <nav class="bar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Breakdown">
+        <button data-tab="projects" class="on">Projects</button>
+        <button data-tab="sessions">Context</button>
+        <button data-tab="days">Days</button>
+        <button data-tab="models">Models</button>
       </div>
-      <div id="range-total" class="range-total"></div>
-    </section>
-
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Breakdown">
-      <button data-tab="projects" class="on">Projects</button>
-      <button data-tab="sessions">Context</button>
-      <button data-tab="days">Days</button>
-      <button data-tab="models">Models</button>
+      <div class="segmented" id="range" role="tablist" aria-label="Period">
+        <button data-days="1" class="on" title="Today">1d</button>
+        <button data-days="7" title="Last 7 days">7d</button>
+        <button data-days="30" title="Last 30 days">30d</button>
+      </div>
     </nav>
 
     <section id="list" class="list" aria-live="polite"></section>
@@ -40,13 +43,16 @@
     <footer>
       <span id="hook-state" class="muted"></span>
       <span id="toast" class="toast" role="status"></span>
+      <span id="version" class="muted"></span>
       <button id="quit" class="link-btn">Quit</button>
     </footer>
 
     <section id="settings" class="settings" hidden aria-label="Settings">
-      <header>
+      <header class="top">
         <h1>Settings</h1>
-        <button id="close-settings" class="icon-btn" title="Close" aria-label="Close">✕</button>
+        <button id="close-settings" class="icon-btn" title="Close" aria-label="Close">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+        </button>
       </header>
       <label class="field">
         <span>Menu bar shows</span>
@@ -56,6 +62,10 @@
           <option value="seven_day">Weekly %</option>
           <option value="icon_only">Meter icon only</option>
         </select>
+      </label>
+      <label class="field check">
+        <input type="checkbox" id="cfg-login">
+        <span>Open at login</span>
       </label>
       <label class="field check">
         <input type="checkbox" id="cfg-notifications">

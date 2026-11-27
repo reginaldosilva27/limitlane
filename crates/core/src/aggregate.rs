@@ -160,6 +160,53 @@ pub fn build_report(entries: &[Entry], pricing: &Pricing, now: i64, days: u32, o
     Report { since, until: now, days: days.max(1), totals, by_project, by_model, by_day, by_session }
 }
 
+/// Model family for display: `claude-fable-5-2` and `claude-3-5-sonnet` become
+/// `Fable` and `Sonnet`.
+pub fn model_family(model: &str) -> String {
+    let m = model.to_ascii_lowercase();
+    for known in ["fable", "mythos", "opus", "sonnet", "haiku"] {
+        if m.contains(known) {
+            let mut c = known.chars();
+            return c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default();
+        }
+    }
+    m.trim_start_matches("claude-").split('-').next().unwrap_or("other").to_string()
+}
+
+/// One model family's part of the usage in a period.
+#[derive(Debug, Clone, Serialize)]
+pub struct FamilyShare {
+    pub family: String,
+    pub totals: Totals,
+    /// 0 to 100, by API-equivalent cost (by tokens when nothing is priced).
+    pub share_pct: f64,
+}
+
+/// Usage per model family between `since` and `now`, largest first.
+pub fn family_shares(entries: &[Entry], pricing: &Pricing, since: i64, now: i64) -> Vec<FamilyShare> {
+    let mut map: BTreeMap<String, Totals> = BTreeMap::new();
+    for e in entries.iter().filter(|e| e.ts >= since && e.ts <= now) {
+        map.entry(model_family(&e.model)).or_default().add(e, pricing);
+    }
+    let cost: f64 = map.values().map(|t| t.cost_usd).sum();
+    let tokens: u64 = map.values().map(|t| t.total_tokens).sum();
+    let mut out: Vec<FamilyShare> = map
+        .into_iter()
+        .map(|(family, totals)| {
+            let share_pct = if cost > 0.0 {
+                totals.cost_usd / cost * 100.0
+            } else if tokens > 0 {
+                totals.total_tokens as f64 / tokens as f64 * 100.0
+            } else {
+                0.0
+            };
+            FamilyShare { family, totals, share_pct }
+        })
+        .collect();
+    out.sort_by(|a, b| b.share_pct.partial_cmp(&a.share_pct).unwrap_or(std::cmp::Ordering::Equal));
+    out
+}
+
 /// Recent pace from transcripts, independent of any limit data.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Burn {
@@ -277,6 +324,27 @@ mod tests {
         let r = build_report(&[], &Pricing::builtin(), 1_795_000_000, 7, brt());
         assert_eq!(r.by_day.len(), 7);
         assert_eq!(r.totals, Totals::default());
+    }
+
+    #[test]
+    fn families_and_shares() {
+        assert_eq!(model_family("claude-fable-5-2"), "Fable");
+        assert_eq!(model_family("claude-3-5-sonnet-20241022"), "Sonnet");
+        assert_eq!(model_family("claude-opus-5-5-20261001"), "Opus");
+        assert_eq!(model_family("gpt-x"), "gpt");
+
+        let p = Pricing::builtin();
+        let entries = vec![
+            e("2026-11-26T10:00:00Z", "s", "/p", "claude-fable-5-2", 3_000_000, 0),  // $24
+            e("2026-11-26T11:00:00Z", "s", "/p", "claude-opus-5-5", 1_000_000, 0),   // $4
+            e("2026-11-26T12:00:00Z", "s", "/p", "claude-opus-5", 800_000, 0),       // $4
+            e("2026-11-20T12:00:00Z", "s", "/p", "claude-haiku-4-5", 9_000_000, 0),  // outside
+        ];
+        let since = chrono::DateTime::parse_from_rfc3339("2026-11-26T00:00:00Z").unwrap().timestamp();
+        let shares = family_shares(&entries, &p, since, since + 86_400);
+        assert_eq!(shares.iter().map(|s| s.family.as_str()).collect::<Vec<_>>(), ["Fable", "Opus"]);
+        assert!((shares[0].share_pct - 75.0).abs() < 1e-9);
+        assert!((shares[1].totals.cost_usd - 8.0).abs() < 1e-9);
     }
 
     #[test]

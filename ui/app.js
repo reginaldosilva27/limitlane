@@ -5,7 +5,7 @@
   const invoke = tauri.core.invoke;
   const $ = (id) => document.getElementById(id);
 
-  const state = { days: 1, tab: "projects", summary: null, config: null };
+  const state = { days: 1, tab: "projects", summary: null, config: null, info: null };
 
   // ---------- helpers ----------
   function h(tag, attrs, ...children) {
@@ -25,7 +25,7 @@
     if (n == null) return "–";
     if (n < 1e3) return String(Math.round(n));
     if (n < 1e6) return (n / 1e3).toFixed(1) + "K";
-    if (n < 1e9) return (n / 1e6).toFixed(2) + "M";
+    if (n < 1e9) return (n / 1e6).toFixed(n < 1e8 ? 2 : 1) + "M";
     return (n / 1e9).toFixed(2) + "B";
   }
 
@@ -56,45 +56,72 @@
   function toast(message, ok) {
     const el = $("toast");
     el.textContent = message;
+    el.title = message;
     el.className = "toast" + (ok ? " ok" : "");
     clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => (el.textContent = ""), 6000);
+    toast.timer = setTimeout(() => (el.textContent = ""), 7000);
   }
 
   // ---------- limits ----------
   const WINDOW_SECS = { five_hour: 5 * 3600, seven_day: 7 * 86400 };
   const WINDOW_NAME = { five_hour: "5-hour", seven_day: "Weekly" };
+  const FAMILIES = ["fable", "mythos", "opus", "sonnet", "haiku"];
+  const famClass = (name) => `fam-${FAMILIES.includes(name.toLowerCase()) ? name.toLowerCase() : "other"}`;
 
-  function forecastText(f, now) {
+  function forecastChip(f, now) {
     if (f.used_pct >= 100) return { text: "Limit reached", cls: "crit" };
     if (f.hits_limit_at != null) {
       const early = fmtDur(f.resets_at - f.hits_limit_at);
-      return { text: `At this pace: limit at ${clock(f.hits_limit_at, true)}, ${early} before reset`, cls: f.hits_limit_at - now < 3600 ? "crit" : "warn" };
+      return { text: `Limit at ${clock(f.hits_limit_at, true)} · ${early} before reset`, cls: f.hits_limit_at - now < 3600 ? "crit" : "warn" };
     }
-    if (f.basis === "none") return { text: "Not enough data for a forecast yet", cls: "" };
-    return { text: `At this pace: ${Math.round(f.projected_pct_at_reset)}% at reset`, cls: "" };
+    if (f.basis === "none") return { text: "Forecast needs a few more minutes", cls: "" };
+    return { text: `On pace for ${Math.round(f.projected_pct_at_reset)}% at reset`, cls: "ok" };
   }
 
-  function limitCard(f, now) {
-    const elapsed = 1 - (f.resets_at - now) / WINDOW_SECS[f.window];
-    const fc = forecastText(f, now);
+  function meter(pct, elapsedPct) {
+    return h("div", { class: `meter ${level(pct)}`, role: "progressbar", "aria-valuenow": Math.round(pct), "aria-valuemin": 0, "aria-valuemax": 100 },
+      h("i", { class: pct <= 0 ? "zero" : "", style: pctWidth(pct) }),
+      elapsedPct == null ? null : h("b", { style: `left:${Math.max(0, Math.min(100, elapsedPct)).toFixed(1)}%`, title: "Time elapsed in this window. A bar past this mark is ahead of an even pace." }));
+  }
+
+  function modelMix(s) {
+    const rows = s.week_models.filter((m) => m.share_pct >= 0.5);
+    if (!rows.length) return null;
+    const tip = "Share of this week's usage by model, measured in API-equivalent cost. Claude Code reports one weekly percentage, not one per model.";
+    return h("div", { class: "mix", title: tip },
+      h("div", { class: "mix-bar" }, rows.map((m) => h("i", { class: famClass(m.family), style: `width:${m.share_pct.toFixed(1)}%` }))),
+      h("div", { class: "mix-legend" }, rows.slice(0, 4).map((m) =>
+        h("span", {}, h("i", { class: `sw ${famClass(m.family)}` }), m.family + " ", h("strong", { text: `${Math.round(m.share_pct)}%` })))));
+  }
+
+  function limitCard(f, s) {
+    const now = s.generated_at;
+    const elapsed = (1 - (f.resets_at - now) / WINDOW_SECS[f.window]) * 100;
+    const chip = forecastChip(f, now);
     return h("div", { class: "limit" },
       h("div", { class: "limit-head" },
-        h("span", { class: "limit-name", text: WINDOW_NAME[f.window] }),
-        h("span", { class: "limit-reset", text: `resets in ${fmtDur(f.resets_at - now)} · ${clock(f.resets_at, true)}` }),
-        h("span", { class: "limit-pct", text: `${Math.round(f.used_pct)}%` })),
-      h("div", { class: `meter ${level(f.used_pct)}`, role: "progressbar", "aria-valuenow": Math.round(f.used_pct), "aria-valuemin": 0, "aria-valuemax": 100 },
-        h("i", { style: pctWidth(f.used_pct) }),
-        h("b", { style: `left:${Math.max(0, Math.min(100, elapsed * 100)).toFixed(1)}%`, title: "Time elapsed in this window. A bar past this mark is ahead of an even pace." })),
-      h("div", { class: `forecast ${fc.cls}`, text: fc.text }));
+        h("div", { class: "limit-id" },
+          h("span", { class: "limit-name", text: WINDOW_NAME[f.window] }),
+          h("span", { class: "limit-reset", text: `Resets in ${fmtDur(f.resets_at - now)} · ${clock(f.resets_at, true)}` })),
+        h("span", { class: "limit-pct" }, String(Math.round(f.used_pct)), h("small", { text: "%" }))),
+      meter(f.used_pct, elapsed),
+      h("span", { class: `chip ${chip.cls}`, text: chip.text }),
+      f.window === "seven_day" ? modelMix(s) : null);
+  }
+
+  function extraRow(w, now) {
+    return h("div", { class: "extra", title: `Resets in ${fmtDur(w.resets_at - now)} · ${clock(w.resets_at, true)}` },
+      h("span", { class: "limit-name", text: w.label }),
+      meter(w.used_pct, null),
+      h("span", { class: "num", text: `${Math.round(w.used_pct)}%` }));
   }
 
   function renderLimits(s) {
     const box = $("limits");
     box.replaceChildren();
     const now = s.generated_at;
-    if (s.forecasts.length) {
-      box.append(...s.forecasts.map((f) => limitCard(f, now)));
+    if (s.forecasts.length || s.extra_windows.length) {
+      box.append(...s.forecasts.map((f) => limitCard(f, s)), ...s.extra_windows.map((w) => extraRow(w, now)));
       return;
     }
     const installed = s.hook.state === "installed";
@@ -103,7 +130,7 @@
       hint.append(h("p", { text: "Waiting for Claude Code. Limits appear after the next response in any session (Pro and Max plans)." }));
     } else {
       hint.append(
-        h("p", { text: "Real 5-hour and weekly limits come from Claude Code's statusline. No credentials, no network calls." }),
+        h("p", { text: "See your real 5-hour and weekly limits. They come from Claude Code's statusline: no credentials, no network calls." }),
         h("button", { class: "btn primary", id: "hint-install", text: "Enable live limits" }));
       if (s.hook.state === "other") hint.append(h("p", { class: "muted small", text: "Your current statusline keeps rendering as it does today." }));
     }
@@ -116,38 +143,40 @@
     if (btn) btn.addEventListener("click", installHook);
   }
 
-  // ---------- strip + totals ----------
-  function renderBurn(s) {
-    const b = s.burn;
-    $("burn").replaceChildren(
-      h("span", {}, "Last 30 min ", h("strong", { text: `${fmtTokens(b.tokens_per_min)}/min` })),
-      h("span", {}, h("strong", { text: `${fmtUsd(b.cost_per_hour)}/h` }), " API-equivalent"));
+  // ---------- readouts ----------
+  const RANGE_NAME = { 1: "Today", 7: "7 days", 30: "30 days" };
+  const ago = (secs) => (secs < 60 ? "now" : `${fmtDur(secs)} ago`);
+
+  function stat(label, value, unit, title) {
+    return h("div", { class: "stat", title },
+      h("div", { class: "stat-label", text: label }),
+      h("div", { class: "stat-value" }, value, unit ? h("small", { text: unit }) : null));
   }
 
-  function renderRangeTotal(s) {
+  function renderStats(s) {
     const t = s.report.totals;
-    $("range-total").replaceChildren(
-      h("strong", { text: fmtUsd(t.cost_usd) }),
-      h("span", { class: "muted", text: ` · ${fmtTokens(t.total_tokens)} tok` }));
-    $("range-total").title = t.unpriced_tokens > 0 ? `${fmtTokens(t.unpriced_tokens)} tokens from models without a known price are not included in the cost.` : "What this usage would cost at API list prices.";
+    const unpriced = t.unpriced_tokens > 0 ? ` ${fmtTokens(t.unpriced_tokens)} tokens from models without a known price are not included.` : "";
+    $("stats").replaceChildren(
+      stat("Burn, last 30 min", fmtTokens(s.burn.tokens_per_min), " /min", "Tokens per minute over the last 30 minutes, cache reads included."),
+      stat("API-equivalent", fmtUsd(s.burn.cost_per_hour), " /h", "What the last 30 minutes would cost per hour at API list prices."),
+      stat(`${RANGE_NAME[s.report.days] || `${s.report.days} days`} · ${fmtTokens(t.total_tokens)} tok`, fmtUsd(t.cost_usd), null, `API-equivalent cost and tokens for the selected period.${unpriced}`));
   }
 
   // ---------- lists ----------
   function costRows(rows, nameOf, subOf, total) {
     if (!rows.length) return [h("div", { class: "empty", text: "No usage in this period." })];
-    const max = Math.max(...rows.map((r) => r.totals.cost_usd), 0) || Math.max(...rows.map((r) => r.totals.total_tokens), 1);
     const useCost = total.cost_usd > 0;
-    return rows.map((r) => {
-      const value = useCost ? r.totals.cost_usd : r.totals.total_tokens;
-      return h("div", { class: "row", title: r.project || r.model || "" },
+    const val = (r) => (useCost ? r.totals.cost_usd : r.totals.total_tokens);
+    const max = Math.max(...rows.map(val), 0) || 1;
+    return rows.map((r) =>
+      h("div", { class: "row", title: r.project || r.model || "" },
         h("div", { class: "row-main" },
           h("span", { class: "row-name", text: nameOf(r) }),
           h("span", { class: "row-value", text: fmtUsd(r.totals.cost_usd) })),
         h("div", { class: "row-sub" },
           h("span", { class: "grow", text: subOf(r) }),
           h("span", { text: `${fmtTokens(r.totals.total_tokens)} tok` })),
-        h("div", { class: "share" }, h("i", { style: pctWidth((value / max) * 100) })));
-    });
+        h("div", { class: "share" }, h("i", { style: pctWidth((val(r) / max) * 100) }))));
   }
 
   function renderProjects(s) {
@@ -171,7 +200,7 @@
           h("span", { class: "row-value", text: pct != null ? `${Math.round(pct)}%` : fmtTokens(v.context_tokens) })),
         h("div", { class: "row-sub" },
           h("span", { class: "grow", text: [v.model, `${fmtTokens(v.context_tokens)}${size} in context`].filter(Boolean).join(" · ") }),
-          h("span", { text: `${fmtDur(s.generated_at - v.last_seen)} ago` })),
+          h("span", { text: ago(s.generated_at - v.last_seen) })),
         pct != null ? h("div", { class: `share ctx ${level(pct)}` }, h("i", { style: pctWidth(pct) })) : null);
     });
   }
@@ -184,7 +213,7 @@
     if (max <= 0) return [h("div", { class: "empty", text: "No usage in this period." })];
     const show = (d) => (useCost ? fmtUsd(d.totals.cost_usd) : fmtTokens(d.totals.total_tokens));
     const step = Math.ceil(days.length / 7);
-    const chart = h("div", { class: "chart", role: "img", "aria-label": `Daily ${useCost ? "API-equivalent cost" : "tokens"}` },
+    const chart = h("div", { class: "chart", role: "img", "aria-label": `Daily ${useCost ? "API-equivalent cost" : "tokens"}, peak ${show(days.reduce((a, b) => (val(b) > val(a) ? b : a)))}` },
       days.map((d, i) => h("div", { class: `col${i === days.length - 1 ? " today" : ""}${val(d) <= 0 ? " zero" : ""}`, title: `${d.date}: ${show(d)} · ${fmtTokens(d.totals.total_tokens)} tokens` },
         h("i", { style: `height:${Math.max(1.5, (val(d) / max) * 100).toFixed(1)}%` }))));
     const axis = h("div", { class: "chart-axis" },
@@ -199,30 +228,28 @@
 
   const TABS = { projects: renderProjects, sessions: renderSessions, days: renderDays, models: renderModels };
 
-  // ---------- footer ----------
-  function renderHook(s) {
-    const el = $("hook-state");
+  // ---------- status ----------
+  function renderStatus(s) {
     const age = s.limits_age_secs;
     let dot = "", text = "Live limits off";
     if (s.hook.state === "installed") {
-      if (age == null) { dot = "stale"; text = "Hook on, waiting for Claude Code"; }
+      if (age == null) { dot = "stale"; text = "Waiting for Claude Code"; }
       else if (age > 900) { dot = "stale"; text = `Limits from ${fmtDur(age)} ago`; }
       else { dot = "on"; text = "Live limits"; }
     } else if (age != null) {
       dot = "stale"; text = `Limits from ${fmtDur(age)} ago`;
     }
-    el.replaceChildren(h("span", { class: `dot ${dot}` }), h("span", { text }));
+    $("hook-state").replaceChildren(h("span", { class: `dot ${dot}` }), h("span", { text }));
+    $("live").textContent = `Updated ${clock(s.generated_at)}`;
   }
 
   function render() {
     const s = state.summary;
     if (!s) return;
     renderLimits(s);
-    renderBurn(s);
-    renderRangeTotal(s);
+    renderStats(s);
     $("list").replaceChildren(...TABS[state.tab](s));
-    renderHook(s);
-    $("updated").textContent = clock(s.generated_at);
+    renderStatus(s);
     renderSettingsHook(s);
   }
 
@@ -258,14 +285,31 @@
 
   function renderSettingsHook(s) {
     const installed = s.hook.state === "installed";
+    const dev = state.info && state.info.dev_build;
     $("hook-toggle").textContent = installed ? "Remove hook" : "Enable live limits";
     $("hook-toggle").className = installed ? "btn" : "btn primary";
-    $("hook-detail").textContent = installed
+    let detail = installed
       ? `Installed${s.hook.chained ? `, runs your statusline afterwards (${s.hook.chained})` : ""}.`
       : s.hook.state === "other"
         ? `Another statusline is configured (${s.hook.command}). Enabling keeps it working.`
         : "Adds one entry to ~/.claude/settings.json. A backup is kept next to it.";
+    if (installed && /\/target\/(debug|release)\//.test(s.hook.command || "")) {
+      detail += " It points at a development build: open the app from /Applications and enable it again there.";
+    } else if (dev && !installed) {
+      detail += " This is a development build; enable from the installed app instead.";
+    }
+    $("hook-detail").textContent = detail;
     $("pricing-note").textContent = `Costs use API list prices as of ${s.pricing_as_of}. Subscriptions are not billed per token.`;
+  }
+
+  async function loadInfo() {
+    try {
+      state.info = await invoke("app_info");
+      $("version").textContent = `v${state.info.version}${state.info.dev_build ? " dev" : ""}`;
+      $("cfg-login").checked = !!state.info.launch_at_login;
+    } catch (e) {
+      /* older shell without app_info: leave the footer empty */
+    }
   }
 
   async function openSettings() {
@@ -274,6 +318,7 @@
     } catch (e) {
       return toast(String(e));
     }
+    await loadInfo();
     const c = state.config;
     $("cfg-menu-bar").value = c.menu_bar;
     $("cfg-notifications").checked = c.notifications;
@@ -290,6 +335,17 @@
       state.config = await invoke("set_config", { config });
       $("cfg-thresholds").value = state.config.thresholds.join(", ");
     } catch (e) {
+      toast(String(e));
+    }
+  }
+
+  async function toggleLogin() {
+    const box = $("cfg-login");
+    try {
+      box.checked = await invoke("set_launch_at_login", { enabled: box.checked });
+    } catch (e) {
+      box.checked = false;
+      $("settings").hidden = true;
       toast(String(e));
     }
   }
@@ -311,6 +367,7 @@
   $("open-settings").addEventListener("click", openSettings);
   $("close-settings").addEventListener("click", () => ($("settings").hidden = true));
   for (const id of ["cfg-menu-bar", "cfg-notifications", "cfg-forecast", "cfg-thresholds"]) $(id).addEventListener("change", saveSettings);
+  $("cfg-login").addEventListener("change", toggleLogin);
   $("hook-toggle").addEventListener("click", () => (state.summary && state.summary.hook.state === "installed" ? removeHook() : installHook()));
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
@@ -327,5 +384,5 @@
       }
     });
   }
-  load();
+  loadInfo().then(load);
 })();

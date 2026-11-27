@@ -6,7 +6,7 @@
 pub const WIDTH: u32 = 40;
 pub const HEIGHT: u32 = 36;
 
-const TRACK_ALPHA: u8 = 80;
+const TRACK_ALPHA: u8 = 120;
 const FILL_ALPHA: u8 = 255;
 const BAR_X: u32 = 2;
 const BAR_W: u32 = 36;

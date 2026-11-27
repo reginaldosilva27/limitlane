@@ -13,19 +13,22 @@
       {
         "label": "main",
         "title": "Claude Tokens Counter",
-        "width": 380,
-        "height": 620,
+        "width": 384,
+        "height": 640,
         "visible": false,
         "decorations": false,
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "shadow": true
+        "shadow": true,
+        "transparent": true,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "macOSPrivateApi": true
   },
   "bundle": {
     "active": true,
