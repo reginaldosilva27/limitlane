@@ -32,3 +32,9 @@ serde_json.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_System_Console"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The popover is a non-activating NSPanel, so it opens over full-screen apps.
+tauri-nspanel = "2.1"
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPanel", "NSResponder", "NSWindow"] }
