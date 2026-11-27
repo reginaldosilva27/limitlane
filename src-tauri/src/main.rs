@@ -206,23 +206,97 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
         eprintln!("[limitlane] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
     }
 
-    // Follow the user to whichever Space is active, including full-screen apps.
-    let _ = window.set_visible_on_all_workspaces(true);
-    let _ = window.set_always_on_top(true);
     let _ = window.set_position(position);
-    let _ = window.show();
+    show_popover(&window);
     // Moving to a display with another pixel density can shift the window;
     // setting the position again once it is on that display settles it.
     let _ = window.set_position(position);
-    let _ = window.set_focus();
     state.refresh_now.store(true, Ordering::Relaxed);
 }
 
 fn show_centered(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.center();
-        let _ = window.show();
-        let _ = window.set_focus();
+        show_popover(&window);
+    }
+}
+
+/// Brings the popover to the front with keyboard focus, on whichever Space is
+/// active (on macOS that includes an app in full screen).
+fn show_popover(window: &WebviewWindow) {
+    #[cfg(target_os = "macos")]
+    if popover_panel::show(window) {
+        return;
+    }
+    let _ = window.set_always_on_top(true);
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// On macOS the popover is a non-activating NSPanel. A regular window never
+/// appeared over a full-screen app, even with FullScreenAuxiliary and the
+/// status level, and focusing it activates the app. A non-activating panel
+/// takes keyboard focus without activating the app, and FullScreenAuxiliary
+/// lets it join a full-screen app's Space.
+#[cfg(target_os = "macos")]
+mod popover_panel {
+    use objc2_app_kit::{NSStatusWindowLevel, NSWindowCollectionBehavior as Behavior, NSWindowStyleMask};
+    use tauri::{Manager, WebviewWindow};
+    use tauri_nspanel::{ManagerExt, WebviewWindowExt};
+
+    mod class {
+        tauri_nspanel::tauri_panel! {
+            panel!(LimitlanePopover {
+                config: {
+                    // Keyboard input (Esc) and the blur that closes the popover
+                    // both need the panel to become the key window.
+                    can_become_key_window: true,
+                    can_become_main_window: false,
+                    // The app never becomes active, so hiding on deactivation
+                    // would hide the popover the moment it opens.
+                    hides_on_deactivate: false
+                }
+            })
+        }
+    }
+
+    /// Turns the popover window into the panel. Call once, on the main thread.
+    pub fn convert(window: &WebviewWindow) -> Result<(), String> {
+        let panel = window.to_panel::<class::LimitlanePopover>().map_err(|e| e.to_string())?;
+        panel.add_style_mask(NSWindowStyleMask::NonactivatingPanel).map_err(|e| e.to_string())?;
+        panel.set_collection_behavior(Behavior::CanJoinAllSpaces | Behavior::FullScreenAuxiliary | Behavior::IgnoresCycle);
+        // Above the full-screen app's window.
+        panel.set_level(NSStatusWindowLevel as i64);
+        Ok(())
+    }
+
+    /// Orders the panel front and makes it key without activating the app.
+    /// False if the window was never converted, so the caller can fall back.
+    pub fn show(window: &WebviewWindow) -> bool {
+        let Ok(panel) = window.app_handle().get_webview_panel(window.label()) else { return false };
+        if objc2::MainThreadMarker::new().is_some() {
+            front(&*panel);
+        } else {
+            let _ = window.run_on_main_thread(move || front(&*panel));
+        }
+        true
+    }
+
+    fn front(panel: &dyn tauri_nspanel::Panel) {
+        panel.order_front_regardless();
+        // Not show_and_make_key(): that hands first responder to the content
+        // view, and the web view would stop receiving keys such as Esc.
+        panel.make_key_window();
+        if cfg!(debug_assertions) || std::env::var_os("LIMITLANE_DEBUG").is_some() {
+            let window = panel.as_panel();
+            let responder = window.firstResponder().map(|r| r.class().name().to_string_lossy().into_owned());
+            eprintln!(
+                "[limitlane] popover visible={} on_active_space={} key={} first_responder={responder:?}",
+                window.isVisible(),
+                window.isOnActiveSpace(),
+                window.isKeyWindow()
+            );
+        }
     }
 }
 
@@ -303,7 +377,10 @@ fn main() {
         hidden_at: Mutex::new(None),
     };
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+    builder
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .manage(state)
@@ -346,6 +423,9 @@ fn main() {
                 let handle = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
+                        if std::env::var_os("LIMITLANE_DEBUG").is_some() {
+                            eprintln!("[limitlane] popover lost focus; hiding");
+                        }
                         if let Some(w) = handle.get_webview_window(WINDOW) {
                             let _ = w.hide();
                         }
@@ -356,6 +436,12 @@ fn main() {
                 });
             }
 
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window(WINDOW) {
+                if let Err(e) = popover_panel::convert(&window) {
+                    eprintln!("[limitlane] popover stays a regular window: {e}");
+                }
+            }
             spawn_refresh_loop(app.handle().clone());
             Ok(())
         })
