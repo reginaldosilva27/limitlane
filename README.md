@@ -133,7 +133,7 @@ Based on each project's README in November 2026; check them for the current stat
 
 ## Status
 
-- Engine and CLI: 47 unit tests, plus an end-to-end run against generated transcripts with totals cross-checked by an independent script.
+- Engine and CLI: 54 unit tests, plus an end-to-end run against generated transcripts with totals cross-checked by an independent script.
 - macOS app: menu bar item, popover and live limits confirmed working on Apple Silicon.
 - Still lightly tested: notifications, open at login, the rounded transparent window, and wrapping an existing statusline on a real setup. Please open an issue if one misbehaves.
 - Builds are not signed or notarized yet, so install from source for now.

@@ -7,6 +7,7 @@
 use ctc_core::alerts::{self, AlertState};
 use ctc_core::config::Config;
 use ctc_core::hook::{self, HookStatus, InstallOutcome};
+use ctc_core::placement::{self, Screen};
 use ctc_core::{icon, Engine, Paths, Summary};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
+use tauri::{AppHandle, Emitter, LogicalPosition, Manager, PhysicalPosition, WebviewWindow, WindowEvent};
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_notification::NotificationExt;
 
@@ -145,6 +146,7 @@ fn update_tray(app: &AppHandle, summary: &Summary, config: &Config) {
 }
 
 /// Show the popover centred under the tray icon, or hide it if it is open.
+/// `icon_pos` and `icon_size` are the tray item's rectangle in physical pixels.
 fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: tauri::PhysicalSize<f64>) {
     let Some(window) = app.get_webview_window(WINDOW) else { return };
     let state = app.state::<AppState>();
@@ -158,21 +160,33 @@ fn toggle_popover(app: &AppHandle, icon_pos: PhysicalPosition<f64>, icon_size: t
     if just_hidden {
         return;
     }
-    if let Ok(size) = window.outer_size() {
-        let mut x = icon_pos.x + icon_size.width / 2.0 - size.width as f64 / 2.0;
-        let y = icon_pos.y + icon_size.height + 4.0;
-        // Keep the popover on the screen that holds the icon.
-        if let Ok(Some(monitor)) = app.monitor_from_point(icon_pos.x, icon_pos.y) {
-            let left = monitor.position().x as f64 + 8.0;
-            let right = monitor.position().x as f64 + monitor.size().width as f64 - size.width as f64 - 8.0;
-            x = x.clamp(left, right.max(left));
-        }
-        let _ = window.set_position(PhysicalPosition::new(x, y));
+
+    let screens: Vec<Screen> = app
+        .available_monitors()
+        .unwrap_or_default()
+        .iter()
+        .map(|m| Screen { x: m.position().x as f64, y: m.position().y as f64, width: m.size().width as f64, height: m.size().height as f64, scale: m.scale_factor() })
+        .collect();
+    let (win_w, win_h) = window
+        .outer_size()
+        .ok()
+        .zip(window.scale_factor().ok())
+        .map(|(size, scale)| (size.width as f64 / scale, size.height as f64 / scale))
+        .unwrap_or((384.0, 640.0));
+    let place = placement::popover_origin(icon_pos.x, icon_pos.y, icon_size.width, icon_size.height, &screens, win_w, win_h);
+    if cfg!(debug_assertions) {
+        eprintln!("[ctc] icon at {icon_pos:?} size {icon_size:?}; screens {screens:?}; popover {place:?}");
     }
+
     // Follow the user to whichever Space is active, including full-screen apps.
     let _ = window.set_visible_on_all_workspaces(true);
     let _ = window.set_always_on_top(true);
+    // Points, not pixels: the only unit that is the same on every display.
+    let _ = window.set_position(LogicalPosition::new(place.x, place.y));
     let _ = window.show();
+    // Moving to a display with another pixel density can shift the window;
+    // setting the position again once it is on that display settles it.
+    let _ = window.set_position(LogicalPosition::new(place.x, place.y));
     let _ = window.set_focus();
     state.refresh_now.store(true, Ordering::Relaxed);
 }
@@ -277,9 +291,9 @@ fn main() {
                 })
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, rect, .. } = event {
-                        let app = tray.app_handle();
-                        let scale = app.get_webview_window(WINDOW).and_then(|w| w.scale_factor().ok()).unwrap_or(1.0);
-                        toggle_popover(app, rect.position.to_physical(scale), rect.size.to_physical(scale));
+                        // The rectangle arrives in physical pixels; the factor is
+                        // only used if a platform ever reports points instead.
+                        toggle_popover(tray.app_handle(), rect.position.to_physical(1.0), rect.size.to_physical(1.0));
                     }
                 })
                 .build(app)?;

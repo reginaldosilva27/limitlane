@@ -14,6 +14,7 @@ pub mod hook;
 pub mod icon;
 pub mod limits;
 pub mod paths;
+pub mod placement;
 pub mod pricing;
 pub mod summary;
 pub mod transcript;
